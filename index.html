@@ -320,6 +320,13 @@ body.clean .hud,body.clean #cross,body.clean #result{display:none!important}
 #sheet .sharebtns .native{grid-column:1/-1;height:48px;font-size:15px}
 #sheet .sharebtns a{display:flex;align-items:center;justify-content:center;height:40px;border-radius:10px;background:rgba(255,255,255,.06);border:1px solid var(--line);color:#e8edf0;text-decoration:none;font:700 13px 'Noto Sans KR',sans-serif}
 @media (max-width:520px){.card.land h1{font-size:38px}.card .quick button{height:58px;font-size:19px}.card .quick button span{font-size:11.5px}#sheet .wrow{grid-template-columns:24px 50px 1fr}}
+/* ---- mobile pass (2026-11) */
+/* landscape phones: the 46px title took half the screen above the map list */
+@media (max-height:500px){.card.land h1{font-size:24px;margin:2px 0 6px}.card.land{padding:12px 16px 10px}}
+/* portrait touch screens: the one-line hint ran under the side buttons; wrap it above the joystick */
+@media (pointer:coarse) and (max-width:720px) and (min-height:501px){
+  #hint{left:12px;right:60px;transform:none;bottom:calc(204px + env(safe-area-inset-bottom));white-space:normal;line-height:1.45}
+}
 </style>
 <script type="importmap">
 { "imports": {

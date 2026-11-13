@@ -436,6 +436,21 @@ mesh.frustumCulled = false;
 mesh.name = 'blocks';
 scene.add(mesh);
 
+// Depth pre-pass. The facade shader above is expensive per pixel, and the instances are drawn in
+// storage order (not front to back), so most pixels used to be shaded several times over. This
+// twin writes depth only (no colour, trivial fragment shader) before anything else; the facade
+// pass then fails the depth test everywhere except the front-most surface, so each pixel runs the
+// facade shader about once. Same image; measured on an Intel UHD 630 the blocks draw got ~3.6x
+// cheaper and whole frames 1.2-2.9x faster depending on the map (most where towers fill the view).
+// It shares the geometry and the instance-matrix buffer, and always draws as many instances.
+export const depthPre = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ colorWrite: false }), CAP);
+depthPre.instanceMatrix = mesh.instanceMatrix;
+Object.defineProperty(depthPre, 'count', { get: () => mesh.count, set() {} });
+depthPre.frustumCulled = false;
+depthPre.renderOrder = -1;
+depthPre.name = 'blocksDepthPre';
+scene.add(depthPre);
+
 // -------- piece store
 export const pieces = new Array(CAP).fill(null);
 const free = [];

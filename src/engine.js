@@ -204,3 +204,51 @@ export function onResize() {
   if (composer) composer.setSize(innerWidth, innerHeight);
 }
 addEventListener('resize', onResize);
+
+// ---------- dynamic resolution
+// Rendering is fill-rate bound (the facade is shaded per pixel), so when a device can't hold the
+// frame rate the cheapest fix is to render fewer pixels: scale the pixel ratio between 55% and 100%
+// of the quality tier's value. Two traps are handled by checking that a drop actually helped:
+// a frame-rate cap (iOS Low Power Mode runs rAF at 30 Hz) and CPU-bound frames (physics during a
+// big collapse) don't get faster with fewer pixels, so an unhelpful drop is undone and the
+// resolution is left alone for a while. ?drs=0 turns it off.
+const PR_MAX = IS_TEST ? 1 : PR;
+export const DRS = {
+  on: !IS_TEST && QS.get('drs') !== '0',
+  pr: PR_MAX, min: Math.max(0.6, PR_MAX * 0.55), max: PR_MAX,
+  acc: 0, n: 0, cpu: 0, hold: 0, fails: 0, trial: null, log: [],
+};
+function setPR(pr) {
+  pr = Math.round(pr * 20) / 20; // 0.05 steps: no resize for tiny changes
+  if (pr === DRS.pr) return false;
+  DRS.pr = pr;
+  renderer.setPixelRatio(pr);
+  renderer.setSize(innerWidth, innerHeight);
+  if (composer) { composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight); }
+  return true;
+}
+/** call once per rendered frame: frameSec = time since the previous frame, cpuMs = JS time spent on this one */
+export function drsTick(frameSec, cpuMs) {
+  if (!DRS.on || !(frameSec > 0) || frameSec > 0.5) return; // tab was hidden / stalled: not a sample
+  DRS.acc += frameSec; DRS.n++; DRS.cpu += cpuMs;
+  if (DRS.acc < 1) return;
+  const fps = DRS.n / DRS.acc, frameMs = 1000 * DRS.acc / DRS.n, cpu = DRS.cpu / DRS.n;
+  DRS.acc = 0; DRS.n = 0; DRS.cpu = 0;
+  if (DRS.trial) { // judge the last drop
+    const t = DRS.trial; DRS.trial = null;
+    if (fps < t.fps * 1.08) { // didn't help: put it back, and wait longer each time this happens
+      setPR(t.pr); DRS.fails++; DRS.hold = Math.min(120, 10 * 2 ** DRS.fails); DRS.log.push(['undo', DRS.pr, +fps.toFixed(1)]);
+      return;
+    }
+    DRS.fails = 0; DRS.hold = 3; // helped: settle before trying to climb back
+  }
+  if (DRS.hold > 0) { DRS.hold--; return; }
+  const gpuBound = cpu < frameMs * 0.6;
+  if (fps < 45 && gpuBound && DRS.pr > DRS.min) {
+    const prev = DRS.pr;
+    if (setPR(Math.max(DRS.min, prev * (fps < 28 ? 0.8 : 0.9)))) { DRS.trial = { pr: prev, fps }; DRS.log.push(['down', DRS.pr, +fps.toFixed(1)]); }
+  } else if (fps > 56 && DRS.pr < DRS.max) {
+    if (setPR(Math.min(DRS.max, DRS.pr * 1.08))) { DRS.hold = 2; DRS.log.push(['up', DRS.pr, +fps.toFixed(1)]); }
+  }
+  if (DRS.log.length > 20) DRS.log.splice(0, DRS.log.length - 20);
+}

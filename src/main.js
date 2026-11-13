@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { scene, camera, controls, renderer, render, IS_TEST, QUALITY, updateLights, exposure, fitSunTo } from './engine.js';
+import { scene, camera, controls, renderer, render, IS_TEST, QUALITY, COARSE, updateLights, exposure, fitSunTo, DRS, drsTick } from './engine.js';
 import * as terrain from './terrain.js';
 import * as B from './blocks.js';
 import * as P from './physics.js';
@@ -130,11 +130,14 @@ function pickNear(x, z, yHint) { const h = surfaceBelow(x, z, Math.max(yHint, 0)
 // ---------------------------------------------------------------- UI
 let tool = 'hammer';
 const toolBtns = [...document.querySelectorAll('.tool')];
+// the weapon hints are written for a mouse; on touch screens it's a tap, and laser / machine-gun
+// rotation is a two-finger drag (see controls.touches below)
+const touchHint = (s) => s.replace(/클릭 한 번에/g, '탭 한 번에').replace(/클릭한/g, '탭한').replace(/오른쪽 끌기/g, '두 손가락 끌기');
 function setTool(t) {
   tool = t;
   W.setGunVisible(t === 'mg');
   for (const b of toolBtns) b.classList.toggle('on', b.dataset.tool === t);
-  $('hint').textContent = W.TOOLS[t].hint;
+  $('hint').textContent = COARSE ? touchHint(W.TOOLS[t].hint) : W.TOOLS[t].hint;
   $('hint').style.opacity = 1;
   if (t === 'laser' || t === 'mg') {
     controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
@@ -432,6 +435,14 @@ function moveCamera(dt) {
   controls.target.add(_mv); camera.position.add(_mv);
 }
 
+// The views are framed for landscape screens. FOV is vertical, so on a portrait phone (aspect ~0.46)
+// 45° leaves barely 22° across and the buildings fall off the sides: widen the vertical FOV until
+// the horizontal coverage matches a 1.25:1 screen, capped at 72° to keep edge distortion mild.
+const H_MIN = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(45) / 2) * 1.25);
+function fitFov(f) {
+  const need = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(H_MIN / 2) / camera.aspect));
+  return Math.max(f, Math.min(need, 72));
+}
 function draw(realDt) {
   B.flushGPU();
   moveCamera(realDt);
@@ -440,7 +451,7 @@ function draw(realDt) {
   if (camera.position.y < gy + 1.5) camera.position.y = gy + 1.5;
   const { off } = FX.applyCamera(realDt);
   camera.position.add(off);
-  const f = baseFov + FX.cam.fovPunch;
+  const f = fitFov(baseFov) + FX.cam.fovPunch;
   if (Math.abs(camera.fov - f) > 0.01) { camera.fov = f; camera.updateProjectionMatrix(); }
   render();
   camera.position.sub(off);
@@ -484,7 +495,8 @@ function runTick(dt) {
   if (tmAcc > 0.1) { tmAcc = 0; $('tm').textContent = fmtT(run.t); }
 }
 function frame(now) {
-  const realDt = Math.min(0.05, (now - last) / 1000); last = now;
+  const t0 = performance.now(), gap = (now - last) / 1000;
+  const realDt = Math.min(0.05, gap); last = now;
   simulate(realDt);
   draw(realDt);
   updateMarkers(false);
@@ -493,6 +505,7 @@ function frame(now) {
   hud(realDt);
   fpsAcc += realDt; fpsN++;
   if (fpsAcc > 1) { fps = fpsN / fpsAcc; fpsAcc = 0; fpsN = 0; }
+  drsTick(gap, performance.now() - t0);
   requestAnimationFrame(frame);
 }
 
@@ -712,7 +725,7 @@ if (vsMs) toast('친구 기록 ' + fmtT(vsMs / 1000) + ' — 이겨 보세요!')
 // test / debugging hooks (deterministic stepping when ?test=1)
 renderSupport(document.getElementById('support')); renderSupport(document.getElementById('rsSupport'));
 window.SMASH = {
-  THREE, scene, camera, controls, terrain, B, P, S, SG, props, FX, W, setView, pickScreen, pickRay,
+  THREE, scene, camera, controls, renderer, QUALITY, DRS, terrain, B, P, S, SG, props, FX, W, setView, pickScreen, pickRay,
   setFov(f) { baseFov = f; },
   setTool, resetWorld, VIEWS, Score, Emblem, renderEmblems, run, Replay, Rank, showResult, shareText,
   advance(sec, step = 1 / 60) { const n = Math.round(sec / step); for (let i = 0; i < n; i++) simulate(step); },
