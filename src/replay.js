@@ -56,9 +56,9 @@ export function tick(glCanvas, caption) {
   g.drawImage(glCanvas, 0, 0, W, h);
   // caption bar
   g.fillStyle = 'rgba(10,11,14,0.62)'; g.fillRect(0, h - 46, W, 46);
-  g.fillStyle = '#ff5a36'; g.font = '700 22px "Black Han Sans", sans-serif'; g.textBaseline = 'middle';
+  g.fillStyle = '#3182f6'; g.font = '800 22px "Pretendard Variable", Pretendard, sans-serif'; g.textBaseline = 'middle';
   g.fillText('회사 때려부수기', 16, h - 23);
-  g.fillStyle = '#ffffff'; g.font = '600 18px sans-serif';
+  g.fillStyle = '#ffffff'; g.font = '600 18px "Pretendard Variable", Pretendard, sans-serif';
   g.fillText(caption.map, 190, h - 23);
   g.textAlign = 'right'; g.fillText(caption.time, W - 16, h - 23); g.textAlign = 'left';
   if (performance.now() / 1000 > stopAt && rec.state === 'recording') rec.stop();
