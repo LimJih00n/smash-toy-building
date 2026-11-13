@@ -1,0 +1,32 @@
+{
+  "id": "kakao-pangyo",
+  "title": "카카오 판교아지트 (판교)",
+  "center": [127.11037, 37.39544],
+  "half": 250,
+  "shp": [
+    "raw/vworld_bldg_41_20261109/AL_D010_41_20261109",
+    "raw/vworld_bldg_41_20261109/AL_D010_41_20261109(2)",
+    "raw/vworld_bldg_41_20261109/AL_D010_41_20261109(3)"
+  ],
+  "targets": [
+    {
+      "label": "카카오 판교아지트",
+      "match": "카카오 판교 아지트",
+      "_note": "LT_C_BLDGINFO has the outline and 지상 15층 but no height (the SHP has no footprint at all for 백현동 532). Height: 15 x 4.5 m like its 알파돔시티 neighbours (알파돔타워 15F 67.6 m, 그레이츠 판교 15F 67.5 m).",
+      "h": 67.5,
+      "h_src": "floors",
+      "use": "14000",
+      "year": "2018",
+      "style": "tower",
+      "fine": true
+    }
+  ],
+  "overrides": [
+    { "name": "알파리움", "dong_prefix": "1", "floors": 19, "use": "02000",
+      "_note": "LT_C_BLDGINFO files 101-105동 as 지상 1층; 알파리움 1단지 is up to 19 floors (6 blocks incl. 타워1동) per a real-estate listing, not verified against the register" },
+    { "name": "알파리움", "dong_prefix": "2", "floors": 20, "use": "02000",
+      "_note": "201-205동 filed as 지상 1층; 알파리움 2단지 is up to 20 floors (same source)" }
+  ],
+  "dense": true,
+  "tough_mul": 1.4
+}

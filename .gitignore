@@ -1,0 +1,5 @@
+# secrets
+.env
+# raw source data downloads (large; regenerate the map JSONs from these)
+raw/
+__pycache__/
