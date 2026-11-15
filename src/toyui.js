@@ -166,8 +166,10 @@ export function initToyUI(api) {
   // what a search looks at: the stage's name first, then its areas, keywords and the companies nearby;
   // initials ('ㅅㅅ') only match the name
   const hay = new Map(world.MAPS.map((m) => {
-    const name = squash([m.title, m.short].filter(Boolean).join(' '));
-    return [m.id, { name, all: squash([m.title, m.short, m.sub, m.kw, ...(m.near || [])].filter(Boolean).join(' ')), ini: initials(name) }];
+    // the shown (twisted) name and the real one both count as the name: '삼성' finds '삼송전자'
+    const r = m.real || {};
+    const name = squash([m.title, m.short, r.title, r.short].filter(Boolean).join(' '));
+    return [m.id, { name, all: squash([name, m.sub, r.sub, m.kw, ...(m.near || [])].filter(Boolean).join(' ')), ini: initials(name) }];
   }));
   /** 0: the name starts with it, 1: the name has it, 2: something else about the stage has it, -1: no match */
   const rank = (m) => {

@@ -7,6 +7,7 @@ import { Building } from './structure.js';
 import { K } from './blocks.js';
 import { mulberry } from './util.js';
 import * as mapgen from './mapgen.js';
+import { parody } from './names.js';
 
 // which map is loaded (data/maps/<id>.json). The old hand-built 'r5' photo map was retired on
 // 2026-10-28: R5 lives on, rebuilt from street view, inside the digital city map ('r5' links land there).
@@ -98,6 +99,12 @@ export const MAPS = [
     near: ['카카오 판교아지트', '알파돔타워', '그레이츠 판교', '알파리움', '판교 미래에셋센터', '그래비티 타워', '판교역 푸르지오시티', 'SG타워', '에프엔타워 판교', '판교역 KCC웰츠타워', '한국반도체산업협회회관'],
     kw: '카카오 kakao 카카오톡 카톡 카카오본사 카카오 본사 판교아지트 판교 아지트 아지트 알파돔 알파돔시티 백현동 판교역 판교역로 분당 성남 신분당선 사옥 본사 it' },
 ];
+// the names on screen are twisted parodies (names.js); the real ones stay in .real for search
+for (const m of MAPS) {
+  m.real = { title: m.title, short: m.short, sub: m.sub };
+  m.title = parody(m.title); m.short = parody(m.short); m.sub = parody(m.sub);
+}
+MAP.title = parody(MAP.title);
 export async function load(id) {
   const m = MAPS.find((x) => x.id === id) || MAPS[0];
   MAP.id = m.id; MAP.title = m.title; MAP.doc = null;

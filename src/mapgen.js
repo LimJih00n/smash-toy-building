@@ -6,9 +6,11 @@ import * as terrain from './terrain.js';
 import { Building } from './structure.js';
 import { K } from './blocks.js';
 import { mulberry, clamp } from './util.js';
+import { parody } from './names.js';
 
 export const layout = { lawns: [], walks: [], asphalt: [], lots: [], roads: [], curbs: [], rows: [] };
 
+const ADDR = /(로|길)\s*\d/; // '도봉로 348', '한강대로40길 18-3'
 const STYLE_NAME = { tower: '연구동', office: '사무동', factory: '공장동', apartment: '아파트동', house: '주택', shop: '상가동', parking: '주차동' };
 const TOUGH = { tower: 0.95, office: 0.9, factory: 0.78, apartment: 0.9, house: 0.7, shop: 0.75, parking: 0.85 };
 
@@ -62,10 +64,13 @@ export function buildBuildings(doc) {
   doc.buildings.forEach((b, idx) => {
     const style = b.style;
     counts[style] = (counts[style] || 0) + 1;
-    const name = b.label || b.name || `${STYLE_NAME[style] || '건물'} ${counts[style]}`;
+    // targets show their twisted name; the neighbours keep only street addresses (their real
+    // building and shop names are not shown)
+    const addr = b.name && (b.tag === 'addr' || ADDR.test(b.name));
+    const name = b.label ? parody(b.label) : addr ? b.name : `${STYLE_NAME[style] || '건물'} ${counts[style]}`;
     const levelH = b.floors ? clamp(b.h / b.floors, 3.6, 7.6) : Math.min(6, b.h);
     const h = Math.max(levelH, b.h);
-    const bld = new Building(name, { target: !!b.label, tag: b.tag || null, levelH, collapse: h > 18, cantilever: 2, tough: (TOUGH[style] ?? 0.9) * (doc.dense ? 1.45 : 1) * (doc.tough_mul || 1), tint: b.tint || null, hold: b.hold ?? null });
+    const bld = new Building(name, { target: !!b.label, tag: b.tag === 'addr' ? 'addr' : null, levelH, collapse: h > 18, cantilever: 2, tough: (TOUGH[style] ?? 0.9) * (doc.dense ? 1.45 : 1) * (doc.tough_mul || 1), tint: b.tint || null, hold: b.hold ?? null });
     const cs = b.cell || (style === 'factory' || style === 'parking' ? 12 : 9); // 'cell': finer pieces for small targets (durability)
     const kindFn = kindFnFor(style, h, levelH, idx + 1, b.facade, b.roof);
     // what the inside is used for (hollow model: slabs, columns, furniture)
