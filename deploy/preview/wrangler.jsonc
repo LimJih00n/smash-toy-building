@@ -1,0 +1,7 @@
+{
+  // phone-test preview of the mobile (toy) build: static files only, no Worker code.
+  // Build and deploy with `python deploy/preview.py --deploy` (dist/ is made by that script).
+  "name": "smash-toy-preview",
+  "compatibility_date": "2026-11-13",
+  "assets": { "directory": "./dist" }
+}

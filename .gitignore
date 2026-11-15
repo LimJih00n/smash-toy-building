@@ -3,3 +3,6 @@
 # raw source data downloads (large; regenerate the map JSONs from these)
 raw/
 __pycache__/
+# preview build output (made by deploy/preview.py)
+deploy/preview/dist/
+deploy/preview/.wrangler/
