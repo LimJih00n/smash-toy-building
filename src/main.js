@@ -148,7 +148,7 @@ function setTool(t) {
   for (const b of toolBtns) b.classList.toggle('on', b.dataset.tool === t);
   $('hint').textContent = COARSE ? touchHint(W.TOOLS[t].hint) : W.TOOLS[t].hint;
   $('hint').style.opacity = 1;
-  if (TOY) TOY.hintShown();
+  if (TOY) TOY.toolChanged(t);
   if (t === 'laser' || t === 'mg' || t === 'sword') {
     controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
     controls.touches = { ONE: -1, TWO: THREE.TOUCH.DOLLY_ROTATE };
@@ -619,7 +619,7 @@ function shareText() {
   const url = new URL(location.href); url.search = ''; url.searchParams.set('map', world.MAP.id);
   if (run.done && !run.nuke) url.searchParams.set('vs', Math.round(run.t * 1000));
   return [
-    '회사 때려부수기 · ' + world.MAP.title,
+    '회사부수기 · ' + world.MAP.title,
     (run.done ? '💥 완파 ⏱ ' + fmtT(run.t) : '💥 파괴율 ' + $('pct').textContent + ' ⏱ ' + fmtT(run.t)) + (singleWeapon() && BOARD_NAME[singleWeapon()] ? ' · ' + BOARD_NAME[singleWeapon()] + '만' : '') + ' · 공격 ' + run.shots + '회' + (run.nuke ? ' · ☢' : ''),
     '💰 피해액 ' + Score.won(Score.state.score) + ' · 직급 ' + Score.rankInfo().id,
     (run.done && !run.nuke ? '👉 이 기록 깨 보기: ' : '👉 ') + url.toString(),

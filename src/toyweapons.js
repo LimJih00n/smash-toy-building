@@ -57,7 +57,27 @@ export function satellite() {
   return g;
 }
 
-/** low-poly faceted rock (the shared meteor material still paints the glowing cracks) */
+/** cartoon comet tail behind the meteor: three nested flame layers (orange, yellow, pale core) streaming
+ *  back along +z from just behind the rock at the origin; unit size (radius 1 by the rock), scaled by the meteor */
+export function cometFlame() {
+  const g = new THREE.Group();
+  const layer = (len, rad, color, opacity, order) => {
+    const pts = [];
+    // starts behind the rock's middle (the rock's face stays clear), flares out round it, then tapers
+    pts.push(new THREE.Vector2(0.55 * rad, 0.15));
+    for (let i = 0; i <= 24; i++) { const t = i / 24; pts.push(new THREE.Vector2(rad * Math.pow(1 - t, 0.75) * (1 + 0.12 * Math.sin(Math.PI * t * 1.2)), 0.45 + t * len)); }
+    const m = new THREE.Mesh(new THREE.LatheGeometry(pts, 24).rotateX(Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide }));
+    m.renderOrder = order;
+    g.add(m);
+  };
+  layer(2.6, 1.0, 0xff6a2a, 0.75, 1);
+  layer(2.0, 0.82, 0xffa62b, 0.85, 2);
+  layer(1.3, 0.6, 0xfff0a0, 0.95, 3);
+  return g;
+}
+
+/** low-poly faceted rock (the shared meteor material paints the craters and glowing cracks) */
 export function meteorGeo() {
   const g = new THREE.IcosahedronGeometry(1, 1); // non-indexed: computeVertexNormals gives flat facets
   const p = g.attributes.position, v = new THREE.Vector3(), r = new Map();

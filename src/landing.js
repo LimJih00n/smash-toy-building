@@ -2,7 +2,7 @@
 import * as Rank from './rank.js';
 
 const api = ((document.querySelector('meta[name="rank-api"]') || {}).content || '').replace(/\/$/, '');
-const SITE_URL = 'https://companysmash.com';
+const SITE_URL = location.origin; // share links point at wherever this build is served
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
 let ctx = null; // { MAPS, MAP, won, toast }
@@ -39,7 +39,7 @@ const WEAPONS = [
 ];
 WEAPONS.push(['8', '칼', '화면을 그으면 그 선대로 베어요. 건물을 끝까지 가로지르면 윗부분이 떨어져요.']);
 const PC = [['🖱 왼쪽 클릭', '공격 (고른 무기)'], ['🖱 끌기', '시점 돌리기'], ['🖱 오른쪽 끌기', '화면 이동'], ['🖱 휠', '확대·축소'], ['W A S D / 방향키', '걸어서 이동'], ['Q / E', '아래로 / 위로'], ['1 ~ 8', '무기 바꾸기'], ['V · R · M · Esc', '시점 · 복원 · 소리 · 맵 선택']];
-const MO = [['👆 탭', '공격 (고른 무기)'], ['☝️ 한 손가락 끌기', '시점 돌리기'], ['✌️ 두 손가락', '이동 · 확대'], ['⬇️ 아래 버튼 줄', '무기 바꾸기 (옆으로 밀면 더 있어요)'], ['⏸ 왼쪽 위 버튼', '일시정지 · 메뉴']];
+const MO = [['👆 탭', '공격 (고른 무기)'], ['☝️ 한 손가락 끌기', '시점 돌리기'], ['✌️ 두 손가락', '이동 · 확대'], ['⬇️ 아래 무기 버튼', '눌러서 무기 바꾸기'], ['⏸ 왼쪽 위 버튼', '일시정지 · 메뉴']];
 function howto(body) {
   const isMo = matchMedia('(pointer: coarse)').matches;
   const tabs = el('div', 'tabs'); const pane = el('div');
@@ -162,7 +162,7 @@ async function guest(body) {
 // ------------------------------------------------------------------ 공유
 function share(body) {
   const url = SITE_URL + '/?map=' + encodeURIComponent(ctx.MAP.id);
-  const text = '우리 회사, 진짜 그 건물 그대로 부숴 봤어? 💥 회사 때려부수기 · ' + ctx.MAP.title;
+  const text = '미니어처 도시, 마음껏 부숴 봤어? 💥 회사부수기 · ' + ctx.MAP.title;
   body.appendChild(el('p', 'lead', '지금 고른 맵(' + ctx.MAP.title + ')으로 바로 들어오는 링크예요.'));
   const box = el('div', 'linkbox'); const inp = el('input'); inp.readOnly = true; inp.value = url; box.appendChild(inp);
   const copy = el('button', null, '링크 복사'); box.appendChild(copy); body.appendChild(box);

@@ -29,6 +29,29 @@ export function initToyUI(api) {
   top.append(menuBtn, meter, score);
   document.body.appendChild(top);
 
+  // ---------------------------------------------------------------- weapon: one button, a picker sheet
+  // the row of every weapon grew with each new one: now the current weapon sits under the thumb, and a tap
+  // opens the whole set (the world waits while you choose)
+  const DESC = {
+    mg: '누르는 동안 연사', hammer: '찍은 곳 내려치기', bomb: '던지면 잠시 뒤 펑', missile: '한 번에 3발',
+    laser: '그은 선대로 절단', meteor: '반경 40 m 초토화', nuke: '전부 날리기 · 기록 제외', sword: '그어서 베기 · 검기',
+  };
+  const dock = $('dock');
+  for (const b of dock.querySelectorAll('.tool')) b.appendChild(el('small', 'desc', DESC[b.dataset.tool] || ''));
+  const wbtn = el('button'); wbtn.id = 'toyWeapon'; wbtn.setAttribute('aria-label', '무기 바꾸기');
+  const wIcon = el('span', 'ic'), wName = el('b'), wText = el('span', 'tx');
+  wText.append(wName, el('small', null, '무기 바꾸기'));
+  wbtn.append(wIcon, wText, svg('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>'));
+  document.body.appendChild(wbtn);
+  const pick = el('div'); pick.id = 'toyPick';
+  const pSheet = el('div', 'sheet'), pHd = el('div', 'hd');
+  pHd.appendChild(el('h2', null, '무기 고르기'));
+  pSheet.append(pHd, dock); pick.appendChild(pSheet); document.body.appendChild(pick);
+  const openPick = () => { pick.classList.add('show'); setPaused(true); };
+  const closePick = () => { if (!pick.classList.contains('show')) return; pick.classList.remove('show'); setPaused(false); };
+  wbtn.addEventListener('click', (e) => { e.stopPropagation(); openPick(); });
+  pick.addEventListener('pointerdown', (e) => { e.stopPropagation(); if (e.target === pick) closePick(); });
+
   // ---------------------------------------------------------------- hint: a moment, then gone
   let hintT = 0;
   const hintShown = () => { clearTimeout(hintT); hintT = setTimeout(() => { $('hint').style.opacity = 0; }, 2200); };
@@ -195,7 +218,14 @@ export function initToyUI(api) {
   }
 
   return {
-    hintShown, onComplete, showResult,
+    onComplete, showResult,
+    /** the weapon changed (picker, number key): show it on the button, close the picker, flash the hint */
+    toolChanged(t) {
+      const b = dock.querySelector(`.tool[data-tool="${t}"]`);
+      if (b) { wIcon.replaceChildren(b.querySelector('svg').cloneNode(true)); wName.textContent = W.TOOLS[t] ? W.TOOLS[t].name : t; }
+      closePick();
+      hintShown();
+    },
     /** the game loop is running: a stage picked from the home screen starts right away */
     ready() {
       const qs = new URLSearchParams(location.search);

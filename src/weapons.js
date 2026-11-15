@@ -569,7 +569,7 @@ class Laser {
 }
 
 // ---------------------------------------------------------------- 4. METEOR
-const meteorMat = new THREE.MeshStandardMaterial({ color: 0x2b2420, roughness: 0.95, metalness: 0.05, emissive: 0xffffff, emissiveIntensity: 1 });
+const meteorMat = new THREE.MeshStandardMaterial({ color: 0xa77a58, roughness: 0.65, metalness: 0, emissive: 0xffffff, emissiveIntensity: 1, flatShading: true });
 meteorMat.onBeforeCompile = (sh) => {
   sh.uniforms.uHeat = meteorMat.userData.uHeat = { value: 0 };
   sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vOP;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvOP = position;');
@@ -582,37 +582,27 @@ float mn(vec3 p){ vec3 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
              mix(mix(mh(i+vec3(0,0,1)),mh(i+vec3(1,0,1)),f.x),mix(mh(i+vec3(0,1,1)),mh(i+vec3(1,1,1)),f.x),f.y),f.z); }`)
     .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
 {
+  // cartoon rock: flat warm brown, darker crater spots, crisp cracks that glow hotter as it falls
   float n = mn(vOP*1.3)*0.55 + mn(vOP*3.1)*0.3 + mn(vOP*7.0)*0.15;
-  float crack = 1.0 - smoothstep(0.0, 0.06, abs(n - 0.5));
+  float crater = smoothstep(0.64, 0.68, mn(vOP*2.3 + 7.0));
+  diffuseColor.rgb *= mix(1.0, 0.62, crater);
+  float crack = 1.0 - smoothstep(0.02, 0.05, abs(n - 0.5));
   float hot = clamp(uHeat, 0.0, 2.0);
-  vec3 lava = mix(vec3(1.0,0.22,0.03), vec3(2.4,1.3,0.45), crack*hot*0.6);
-  totalEmissiveRadiance = lava * (crack*1.6 + 0.12*hot) * hot * 1.6;
-  diffuseColor.rgb *= 0.55 + 0.5*n;
+  totalEmissiveRadiance = mix(vec3(1.0, 0.45, 0.1), vec3(1.0, 0.85, 0.35), clamp(hot - 0.6, 0.0, 1.0)) * crack * min(1.0, hot) * 1.2;
 }`);
 };
 meteorMat.userData.uHeat = { value: 0 };
-meteorMat.flatShading = true; meteorMat.color.set(0x6a5040); // faceted low-poly rock
 const meteorGeo = TOY.meteorGeo();
-const plasmaShellMat = new THREE.ShaderMaterial({
-  uniforms: { uA: { value: 0 }, uT: { value: 0 } },
-  vertexShader: 'varying vec3 vN; varying vec3 vV; varying vec3 vP; void main(){ vP = position; vec4 mv = modelViewMatrix*vec4(position,1.0); vN = normalize(normalMatrix*normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix*mv; }',
-  fragmentShader: `uniform float uA; uniform float uT; varying vec3 vN; varying vec3 vV; varying vec3 vP;
-  void main(){ float f = pow(1.0 - abs(dot(vN, vV)), 1.6); float front = smoothstep(-1.0, 1.0, vP.z);
-    float flick = 0.8 + 0.2*sin(uT*40.0 + vP.x*6.0);
-    vec3 c = mix(vec3(2.4,0.7,0.12), vec3(2.6,2.0,1.4), front) * f * flick;
-    gl_FragColor = vec4(c*uA, f*uA); }`,
-  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-});
 // the meteor's wake is alpha-blended (not additive) so it reads against a bright daytime sky:
 // white-hot at the rock, orange, then a long dark smoke tail
 const meteorTrailMat = () => new THREE.ShaderMaterial({
   vertexShader: 'attribute float a; varying float vA; void main(){ vA = a; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
   fragmentShader: `varying float vA; void main(){
     float k = clamp(vA / 0.75, 0.0, 1.0);
-    vec3 smoke = vec3(0.46, 0.43, 0.41), fire = vec3(1.9, 0.75, 0.2), hot = vec3(2.6, 2.1, 1.5);
+    vec3 smoke = vec3(0.95, 0.92, 0.88), fire = vec3(1.0, 0.55, 0.18), hot = vec3(1.0, 0.93, 0.62); // cream puff -> orange -> pale yellow
     vec3 c = mix(smoke, fire, smoothstep(0.35, 0.8, k));
     c = mix(c, hot, smoothstep(0.88, 1.0, k));
-    gl_FragColor = vec4(c, smoothstep(0.0, 0.35, k) * 0.88); }`,
+    gl_FragColor = vec4(c, smoothstep(0.0, 0.35, k) * 0.6); }`,
   transparent: true, depthWrite: false, side: THREE.DoubleSide,
 });
 class Meteor {
@@ -637,7 +627,7 @@ class Meteor {
     this.dir = this.c.clone().sub(this.start).normalize();
     this.T = 2.5; this.t = 0; this.phase = 'fall';
     this.rock = new THREE.Mesh(meteorGeo, meteorMat); this.rock.scale.setScalar(this.R); this.rock.castShadow = true;
-    this.shell = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 20), plasmaShellMat.clone());
+    this.shell = TOY.cometFlame(); // a cartoon comet tail streaming back from the rock
     this.grp = new THREE.Group(); this.grp.add(this.rock, this.shell); scene.add(this.grp);
     this.spinAxis = randomUnit(new THREE.Vector3());
     this.trail = []; this.trailMesh = makeTrail(0xffffff); this.trailMesh.renderOrder = 4;
@@ -666,10 +656,8 @@ class Meteor {
       const heat = 0.5 + 1.2 * k;
       meteorMat.userData.uHeat.value = heat;
       this.shell.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), this.dir.clone().negate());
-      this.shell.scale.set(this.R * 1.3, this.R * 1.3, this.R * (1.5 + 0.9 * k));
-      this.shell.position.copy(this.dir).multiplyScalar(-this.R * 0.25 * k);
-      this.shell.material.uniforms.uA.value = 0.45 + 0.6 * k;
-      this.shell.material.uniforms.uT.value = this.t;
+      const fl = 1 + 0.07 * Math.sin(this.t * 37) + 0.05 * Math.sin(this.t * 23); // flicker
+      this.shell.scale.set(this.R * 1.2 * fl, this.R * 1.2 * fl, this.R * (1.4 + 1.6 * k) * fl);
       // burning wake: hot near the rock, dark smoke further back
       const back = this.dir.clone().negate();
       const n = 5 + Math.round(6 * k);
@@ -681,7 +669,7 @@ class Meteor {
       for (let i = 0; i < 2; i++) {
         const o = randomUnit(new THREE.Vector3()).multiplyScalar(this.R * 0.8);
         const along = rand(4.5, 7) * this.R; // well behind the rock, so it never darkens the fireball itself
-        FX.smoke(pos.x + o.x + back.x * along, pos.y + o.y + back.y * along, pos.z + o.z + back.z * along, o.x * 0.2, 1, o.z * 0.2, rand(7, 10), this.R * 1.0, this.R * rand(2.2, 3.0), 0.55, 0.55);
+        FX.smoke(pos.x + o.x + back.x * along, pos.y + o.y + back.y * along, pos.z + o.z + back.z * along, o.x * 0.2, 1, o.z * 0.2, rand(7, 10), this.R * 1.0, this.R * rand(2.2, 3.0), 0.12, 0.55); // white cartoon puffs
       }
       for (let i = 0; i < 5; i++) { const v = randomUnit(new THREE.Vector3()).multiplyScalar(25).addScaledVector(back, 80); FX.spark(pos.x, pos.y, pos.z, v.x, v.y, v.z, rand(0.5, 1.1), 1.2, [1, 0.6, 0.3]); }
       FX.glow(pos.x, pos.y, pos.z, 0.08, this.R * 5, this.R * 4, [1.4, 0.6, 0.18, 1]);
@@ -690,7 +678,7 @@ class Meteor {
       this.trail.push(pos.clone()); if (this.trail.length > 60) this.trail.shift();
       const camDir = camera.position.clone().sub(pos).normalize();
       const sideT = new THREE.Vector3().crossVectors(this.dir, camDir).normalize();
-      updateTrail(this.trailMesh, this.trail, sideT, this.R, null, (q) => this.R * 1.4 * Math.pow(q, 0.8));
+      updateTrail(this.trailMesh, this.trail, sideT, this.R, null, (q) => this.R * 0.7 * Math.pow(q, 0.8));
       this.light.light.position.copy(pos);
       this.light.light.intensity = 1.2e4 * k * k + 600;
       this.sfx.set(0.1 + 0.7 * k);
@@ -703,9 +691,9 @@ class Meteor {
     // aftermath: hold the shot, then hand the camera back
     const k = Math.min(1, this.t / 14);
     meteorMat.userData.uHeat.value = lerp(1.2, 0.25, k);
-    if (this.trail.length) { this.trail.splice(0, 6); updateTrail(this.trailMesh, this.trail, new THREE.Vector3(1, 0, 0), this.R, null, (q) => this.R * 1.4 * Math.pow(q, 0.8)); }
+    if (this.trail.length) { this.trail.splice(0, 6); updateTrail(this.trailMesh, this.trail, new THREE.Vector3(1, 0, 0), this.R, null, (q) => this.R * 0.7 * Math.pow(q, 0.8)); }
     this.light.light.intensity = 1500 * (1 - k);
-    if (Math.random() < 0.25 * (1 - k)) FX.smoke(this.grp.position.x + rand(-6, 6), this.grp.position.y + 4, this.grp.position.z + rand(-6, 6), rand(-1, 1), rand(4, 8), rand(-1, 1), rand(5, 8), 6, 18, 0.7, 0.55);
+    if (Math.random() < 0.25 * (1 - k)) FX.smoke(this.grp.position.x + rand(-6, 6), this.grp.position.y + 4, this.grp.position.z + rand(-6, 6), rand(-1, 1), rand(4, 8), rand(-1, 1), rand(5, 8), 6, 18, 0.25, 0.55);
     if (k >= 1) { this.light.update = null; scene.remove(this.trailMesh); return false; }
     return true;
   }
@@ -731,7 +719,7 @@ class Meteor {
     FX.every(0.08, 2.6, (tt) => {
       const r = 8 + tt * 5, y = 8 + tt * 36;
       FX.fire(c.x + rand(-r, r) * 0.5, c.y + y * rand(0.4, 1), c.z + rand(-r, r) * 0.5, rand(-5, 5), rand(14, 28), rand(-5, 5), rand(0.7, 1.2), 8, 20, rand(0.7, 1.0) * (1 - tt / 3));
-      FX.smoke(c.x + rand(-r, r), c.y + y + rand(0, 16), c.z + rand(-r, r), rand(-4, 4), rand(8, 14), rand(-4, 4), rand(7, 11), 12, 32, 0.85, 0.75);
+      FX.smoke(c.x + rand(-r, r), c.y + y + rand(0, 16), c.z + rand(-r, r), rand(-4, 4), rand(8, 14), rand(-4, 4), rand(7, 11), 12, 32, 0.4, 0.75);
     });
     FX.every(0.07, 5, () => { const v = randomUnit(new THREE.Vector3()); FX.ember(c.x + v.x * 60, c.y + 60 + rand(0, 60), c.z + v.z * 60, rand(-4, 4), rand(-2, 2), rand(-4, 4), rand(3, 5), rand(0.5, 1)); });
     // the core stays, half buried and glowing
@@ -1362,7 +1350,7 @@ export function warmup(renderer) {
   take(makeTrail(0xffffff));
   const mt = take(makeTrail(0xffffff)); mt.material = meteorTrailMat();
   g.add(new THREE.Mesh(beamGeo, beamMat([1, 1, 1], [1, 1, 1], 1)), new THREE.Mesh(new THREE.PlaneGeometry(), pathMat));
-  g.add(new THREE.Mesh(meteorGeo, meteorMat), new THREE.Mesh(sphere, plasmaShellMat), new THREE.Mesh(sphere, fireballMat));
+  g.add(new THREE.Mesh(meteorGeo, meteorMat), TOY.cometFlame(), new THREE.Mesh(sphere, fireballMat));
   g.add(new THREE.Mesh(tracerGeo, tracerMat));
   g.add(...FX.warmObjects());
   // props knocked loose fly as plain meshes (not instanced)
