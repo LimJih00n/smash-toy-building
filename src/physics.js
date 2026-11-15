@@ -16,7 +16,9 @@ let awake = [];
 export const clusters = [];
 export const hooks = { impact: null, crush: null, shatter: null };
 export const budget = { split: 0, crush: 0 };
-export const LIMITS = { maxAwake: 1500, maxBodies: 2600 };
+// crowded: above this many awake bodies, one substep and small fragments skip each other;
+// throttle: above this many, body-body pairs are tested every other step
+export const LIMITS = { maxAwake: 1500, maxBodies: 2600, crowded: 300, throttle: 900 };
 export const prof = { cp: 0, cs: 0, cpHit: 0, csHit: 0, integ: 0, terrain: 0, stat: 0, pairs: 0, sleep: 0, sync: 0, impacts: 0, clusters: 0, n: 0 };
 const now = () => performance.now();
 let uid = 1, frameNo = 0;
@@ -329,7 +331,7 @@ export function step(dt) {
   budget.crush = awake.length > LIMITS.maxAwake * 0.8 ? 1 : 2;
   enforceBudget();
   auditSleepers(160);
-  crowded = awake.length > 300;
+  crowded = awake.length > LIMITS.crowded;
   const SUB = crowded ? 1 : 2, h = dt / SUB;
   // long-lived rubble that is barely moving is put to rest so huge piles stay cheap
   for (const b of awake) if (frameNo - b.born > 360 && b._contact && b.vel.lengthSq() < 6 && b.ang.lengthSq() < 6) b._force = true;
@@ -371,7 +373,7 @@ export function step(dt) {
         c.push(b); cells.push(key);
       }
     }
-    const throttle = awake.length > 900;
+    const throttle = awake.length > LIMITS.throttle;
     for (const b of awake) b._nc = 0;
     for (const b of awake) {
       if (b.sleep) continue;

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { scene, camera, controls, renderer, render, IS_TEST, QUALITY, COARSE, updateLights, exposure, fitSunTo, DRS, drsTick } from './engine.js';
+import { scene, camera, controls, renderer, render, IS_TEST, QUALITY, COARSE, STYLE, updateLights, exposure, fitSunTo, DRS, drsTick } from './engine.js';
 import * as terrain from './terrain.js';
 import * as B from './blocks.js';
 import * as P from './physics.js';
@@ -13,8 +13,8 @@ import * as W from './weapons.js';
 import * as Score from './score.js';
 import * as Replay from './replay.js';
 import * as Rank from './rank.js';
-import { renderSupport } from './site.js';
-import { initLanding, wishVote } from './landing.js';
+import { initLanding, openSheet } from './landing.js';
+import { initToyUI } from './toyui.js';
 import * as Emblem from './emblem.js';
 import { clamp } from './util.js';
 initLanding({ MAPS: world.MAPS, MAP: world.MAP, won: Score.won }); // first-screen sheets work while the map loads
@@ -27,7 +27,6 @@ try { await world.load(urlMap); } catch (e) { console.error(e); await world.load
 world.build();
 fitSunTo(Math.max(0, ...S.buildings.map((b) => b.top || 0)));
 props.build();
-props.buildSkyline();
 P.LIMITS.maxAwake = QUALITY.level === 'low' ? 420 : 700;
 P.LIMITS.maxBodies = QUALITY.level === 'low' ? 1500 : 2600;
 
@@ -66,12 +65,16 @@ function focusViews(f) {
 }
 export const VIEWS = world.MAP.doc ? (world.MAP.doc.id === 'suwon-core' || !world.MAP.doc.focus ? VIEW_SETS.zone : focusViews(world.MAP.doc.focus)) : VIEW_SETS.r5;
 const viewOrder = Object.keys(VIEWS);
-let viewIdx = 0, baseFov = 45;
+let viewIdx = 0, baseFov = STYLE.fov;
+// views are framed for a 45° lens; a narrower lens (toy style) backs the camera off along the same
+// line so the framing stays the same and only the perspective flattens
+const LENS = Math.tan(THREE.MathUtils.degToRad(45) / 2) / Math.tan(THREE.MathUtils.degToRad(STYLE.fov) / 2);
 export function setView(name) {
   const v = VIEWS[name];
-  camera.position.set(...v.pos);
   controls.target.set(...v.target);
-  baseFov = v.fov || 45; camera.fov = baseFov; camera.updateProjectionMatrix();
+  camera.position.set(...v.pos);
+  if (!v.fov && LENS !== 1) camera.position.sub(controls.target).multiplyScalar(LENS).add(controls.target);
+  baseFov = v.fov || STYLE.fov; camera.fov = baseFov; camera.updateProjectionMatrix();
   controls.update();
 }
 setView('home');
@@ -128,18 +131,25 @@ W.setSurfaceProbe(surfaceBelow);
 function pickNear(x, z, yHint) { const h = surfaceBelow(x, z, Math.max(yHint, 0) + 60); return h ? h.point : null; }
 
 // ---------------------------------------------------------------- UI
+// phones (touch screens): the same destruction with fewer loose bodies simulated at once, and the
+// physics' crowded-scene shortcuts kicking in earlier, so a big collapse doesn't stall a phone CPU
+if (COARSE) Object.assign(P.LIMITS, { maxAwake: 800, maxBodies: 1600, crowded: 160, throttle: 480 });
 let tool = 'hammer';
 const toolBtns = [...document.querySelectorAll('.tool')];
 // the weapon hints are written for a mouse; on touch screens it's a tap, and laser / machine-gun
 // rotation is a two-finger drag (see controls.touches below)
 const touchHint = (s) => s.replace(/클릭 한 번에/g, '탭 한 번에').replace(/클릭한/g, '탭한').replace(/오른쪽 끌기/g, '두 손가락 끌기');
+let TOY = null; // the UI around the game (src/toyui.js), set up once the rest of the page exists
+let paused = false; // the toy UI's pause menu is open: the world stands still
 function setTool(t) {
   tool = t;
   W.setGunVisible(t === 'mg');
+  W.setSwordVisible(t === 'sword');
   for (const b of toolBtns) b.classList.toggle('on', b.dataset.tool === t);
   $('hint').textContent = COARSE ? touchHint(W.TOOLS[t].hint) : W.TOOLS[t].hint;
   $('hint').style.opacity = 1;
-  if (t === 'laser' || t === 'mg') {
+  if (TOY) TOY.hintShown();
+  if (t === 'laser' || t === 'mg' || t === 'sword') {
     controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
     controls.touches = { ONE: -1, TWO: THREE.TOUCH.DOLLY_ROTATE };
   } else {
@@ -170,29 +180,50 @@ const CRUMBLE = 0.03; // a target with ≤3% of its volume standing gives way co
 const markerBox = document.createElement('div'); markerBox.id = 'markers'; markerBox.className = 'hud'; document.body.appendChild(markerBox);
 const markers = new Map();
 const _mv3 = new THREE.Vector3(), _mvp = new THREE.Vector3();
-let mkMain = null; // one marker per target name (a tower split into parts keeps the tag on its biggest part)
+let mkMain = null, mkList = null; // one marker per target name (a tower split into parts keeps the tag on its biggest part)
+// runs every frame: walks only the buildings that carry a marker, and writes to the DOM only on change
+const show = (m, on) => { if (m.on !== on) { m.on = on; m.el.style.display = on ? 'block' : 'none'; } };
+// the camera pose and screen the markers were last placed for: with neither changed (and no recalc),
+// every marker is already where it should be
+const mkCam = new Float64Array(10);
+// the viewport size, kept from resize events: reading innerWidth right after a DOM write forces a layout
+let vpW = innerWidth, vpH = innerHeight;
+addEventListener('resize', () => { vpW = innerWidth; vpH = innerHeight; });
+function camMoved() {
+  const p = camera.position, q = camera.quaternion, v = [p.x, p.y, p.z, q.x, q.y, q.z, q.w, camera.fov, vpW, vpH];
+  let moved = false;
+  for (let i = 0; i < 10; i++) if (mkCam[i] !== v[i]) { mkCam[i] = v[i]; moved = true; }
+  return moved;
+}
 function updateMarkers(recalc) {
-  if (!mkMain) { mkMain = new Map(); for (const b of S.buildings) if (b.target) { const o = mkMain.get(b.name); if (!o || b.vol0 > o.vol0) mkMain.set(b.name, b); } }
-  for (const b of S.buildings) {
-    if (!b.target && b.tag !== 'name' && b.tag !== 'addr') continue;
-    if (b.target && mkMain.get(b.name) !== b) continue;
+  if (!mkMain) {
+    mkMain = new Map(); for (const b of S.buildings) if (b.target) { const o = mkMain.get(b.name); if (!o || b.vol0 > o.vol0) mkMain.set(b.name, b); }
+    mkList = S.buildings.filter((b) => (b.target ? mkMain.get(b.name) === b : b.tag === 'name' || b.tag === 'addr'));
+    recalc = true;
+  }
+  if (!camMoved() && !recalc) return;
+  const vw = vpW, vh = vpH;
+  for (const b of mkList) {
     let m = markers.get(b);
-    if (!m) { m = { el: document.createElement('div'), at: null }; m.el.className = b.target ? 'mk' : b.tag === 'addr' ? 'mk sub addr' : 'mk sub'; markerBox.appendChild(m.el); markers.set(b, m); }
+    if (!m) { m = { el: document.createElement('div'), at: null, on: true, tf: '' }; m.el.className = b.target ? 'mk' : b.tag === 'addr' ? 'mk sub addr' : 'mk sub'; markerBox.appendChild(m.el); markers.set(b, m); }
     if (recalc) {
       m.at = b.cleared || !b.statics.size ? null : S.remainingAnchor(b);
       const left = b.vol0 ? b.volume() / b.vol0 : 0;
-      m.el.textContent = b.target ? b.name + ' ' + Math.min(99, Math.floor((1 - left) * 100)) + '%' : b.name;
+      const txt = b.target ? b.name + ' ' + Math.min(99, Math.floor((1 - left) * 100)) + '%' : b.name;
+      if (m.txt !== txt) { m.txt = txt; m.el.textContent = txt; }
       if (!b.target && left < 0.35) m.at = null; // named neighbours: tag disappears once mostly down
     }
-    if (!m.at) { m.el.style.display = 'none'; continue; }
+    if (!m.at) { show(m, false); continue; }
+    // neighbours' tags only show up close: test the distance before projecting
+    if (!b.target && camera.position.distanceToSquared(_mvp.set(m.at[0], m.at[1], m.at[2])) > (b.tag === 'addr' ? 200 * 200 : 380 * 380)) { show(m, false); continue; }
     _mv3.set(m.at[0], m.at[1] + 10, m.at[2]).project(camera);
-    if (_mv3.z > 1 || Math.abs(_mv3.x) > 1.1 || Math.abs(_mv3.y) > 1.1) { m.el.style.display = 'none'; continue; }
-    if (!b.target && camera.position.distanceTo(_mvp.set(m.at[0], m.at[1], m.at[2])) > (b.tag === 'addr' ? 200 : 380)) { m.el.style.display = 'none'; continue; }
-    m.el.style.display = 'block';
-    m.el.style.transform = `translate(${((_mv3.x + 1) / 2 * innerWidth).toFixed(0)}px,${((1 - _mv3.y) / 2 * innerHeight).toFixed(0)}px) translate(-50%,-100%)`;
+    if (_mv3.z > 1 || Math.abs(_mv3.x) > 1.1 || Math.abs(_mv3.y) > 1.1) { show(m, false); continue; }
+    show(m, true);
+    const tf = `translate(${((_mv3.x + 1) / 2 * vw).toFixed(0)}px,${((1 - _mv3.y) / 2 * vh).toFixed(0)}px) translate(-50%,-100%)`;
+    if (tf !== m.tf) { m.tf = tf; m.el.style.transform = tf; }
   }
 }
-function clearMarkers() { markerBox.textContent = ''; markers.clear(); mkMain = null; }
+function clearMarkers() { markerBox.textContent = ''; markers.clear(); mkMain = null; mkList = null; }
 const run = { on: false, t: 0, done: false, nuke: false, shots: 0, lastRatio: 0, weapons: new Set() };
 const qs0 = new URLSearchParams(location.search);
 const vsMs = qs0.get('map') === world.MAP.id ? +qs0.get('vs') || 0 : 0; // challenge link: a friend's time to beat (same map only)
@@ -227,6 +258,7 @@ function runComplete() {
   run.newEmb = Emblem.onClear({ map: world.MAP.id, sec: run.t, shots: run.shots, nuke: run.nuke, weapon: singleWeapon() }, world.MAPS);
   setTimeout(() => embPop(run.newEmb), 2600);
   Replay.trigger(4.5, true);
+  if (TOY) TOY.onComplete();
   setTimeout(() => showResult(), 5200);
 }
 
@@ -258,29 +290,31 @@ function scoreTick() {
   lastLostVol = lost;
   for (const b of S.buildings) if (b.vol0 > 0 && b.volume() < b.vol0 * 0.15) Score.buildingCollapsed(b.name);
 }
+// HUD writes only when the value changed: every write invalidates the page's style and layout
+const setText = (id, t) => { const e = $(id); if (e.textContent !== t) e.textContent = t; };
+const setStyle = (id, k, v) => { const e = $(id); if (e.style[k] !== v) e.style[k] = v; };
 function scoreHud() {
   const st = Score.state, r = Score.rankInfo(), nx = Score.nextRank();
-  const rk = $('rk'); if (rk.textContent !== r.id) rk.textContent = r.id;
-  $('score').style.color = r.color;
-  $('rn').textContent = nx ? '다음 · ' + nx.id : '최고 직급';
-  $('sv').textContent = Score.won(st.score);
-  $('gb').style.width = (Score.gaugeFrac() * 100).toFixed(1) + '%';
-  $('mul').textContent = '×' + (r.mult * st.toolMult).toFixed(2);
-  $('best').textContent = '최고 ' + Score.won(st.best);
+  setText('rk', r.id);
+  setStyle('score', 'color', r.color);
+  setText('rn', nx ? '다음 · ' + nx.id : '최고 직급');
+  setText('sv', Score.won(st.score));
+  setStyle('gb', 'width', (Score.gaugeFrac() * 100).toFixed(1) + '%');
+  setText('mul', '×' + (r.mult * st.toolMult).toFixed(2));
+  setText('best', '최고 ' + Score.won(st.best));
 }
 
-$('bView').addEventListener('click', () => { viewIdx = (viewIdx + 1) % viewOrder.length; setView(viewOrder[viewIdx]); toast(VIEWS[viewOrder[viewIdx]].label); });
-$('bReset').addEventListener('click', () => resetWorld());
-$('bSound').addEventListener('click', () => { A.setMuted(!A.isMuted()); $('bSound').textContent = A.isMuted() ? '🔇' : '🔊'; });
+function cycleView() { viewIdx = (viewIdx + 1) % viewOrder.length; setView(viewOrder[viewIdx]); toast(VIEWS[viewOrder[viewIdx]].label); }
+function toggleSound() { A.setMuted(!A.isMuted()); }
 
 addEventListener('keydown', (e) => {
   if (e.repeat || (e.target && e.target.tagName === 'INPUT')) return;
   const k = e.key.toLowerCase();
-  const map = { 1: 'mg', 2: 'hammer', 3: 'bomb', 4: 'missile', 5: 'laser', 6: 'meteor', 7: 'nuke' };
+  const map = { 1: 'mg', 2: 'hammer', 3: 'bomb', 4: 'missile', 5: 'laser', 6: 'meteor', 7: 'nuke', 8: 'sword' };
   if (map[k]) setTool(map[k]);
   else if (k === 'r') resetWorld();
-  else if (k === 'v') $('bView').click();
-  else if (k === 'm') $('bSound').click();
+  else if (k === 'v') cycleView();
+  else if (k === 'm') toggleSound();
   else if (k === 'escape' && drawing) cancelLaser();
   else if (k === 'escape') { if ($('veil').classList.contains('hide')) openVeil(); else closeVeil(); }
 });
@@ -288,7 +322,20 @@ addEventListener('keydown', (e) => {
 // ---------------------------------------------------------------- pointer input
 const cross = $('cross');
 const canvas = renderer.domElement;
-let down = null, drawing = null, firing = false, aimAcc = 0;
+let down = null, drawing = null, firing = false, aimAcc = 0, swipe = null;
+// sword taps chain strokes in turn: → ← ↘ ↙ ↓ ↗ (screen angle in degrees, 0 = left to right, 90 = downward),
+// a little off each time; a pause of over 1.2 s starts the chain again
+const COMBO = [-6, 186, 35, 145, 88, -35];
+let combo = 0, comboT = 0;
+// sword: a white line follows the swipe until release
+const slashLine = document.createElement('div'); slashLine.id = 'slashLine';
+slashLine.style.cssText = 'position:fixed;left:0;top:0;height:4px;margin-top:-2px;border-radius:2px;background:#fff;box-shadow:0 0 8px rgba(255,255,255,.9),0 0 2px rgba(0,0,0,.35);transform-origin:0 50%;pointer-events:none;display:none;z-index:5';
+document.body.appendChild(slashLine);
+function drawSlashLine(x0, y0, x1, y1) {
+  if (x0 == null) { slashLine.style.display = 'none'; return; }
+  slashLine.style.display = 'block'; slashLine.style.width = Math.hypot(x1 - x0, y1 - y0) + 'px';
+  slashLine.style.transform = `translate(${x0}px,${y0}px) rotate(${Math.atan2(y1 - y0, x1 - x0)}rad)`;
+}
 function crossAt(x, y, bad) { cross.style.display = 'block'; cross.style.left = x + 'px'; cross.style.top = y + 'px'; cross.classList.toggle('bad', !!bad); }
 canvas.addEventListener('pointerdown', (e) => {
   A.init();
@@ -299,6 +346,7 @@ canvas.addEventListener('pointerdown', (e) => {
     crossAt(e.clientX, e.clientY, !h);
     return;
   }
+  if (tool === 'sword' && e.button === 0 && e.isPrimary) { swipe = { x: e.clientX, y: e.clientY }; crossAt(e.clientX, e.clientY, false); return; }
   if (tool === 'laser' && e.button === 0 && e.isPrimary) {
     drawing = new W.LaserPath();
     const h = pickScreen(e.clientX, e.clientY);
@@ -314,6 +362,7 @@ canvas.addEventListener('pointermove', (e) => {
     if (now - aimAcc > 30) { aimAcc = now; const h = pickScreen(e.clientX, e.clientY); if (h) W.gunAim(h); crossAt(e.clientX, e.clientY, !h); }
     return;
   }
+  if (swipe && !down?.multi) { drawSlashLine(swipe.x, swipe.y, e.clientX, e.clientY); crossAt(e.clientX, e.clientY, false); return; }
   if (drawing) {
     const h = pickScreen(e.clientX, e.clientY);
     // only real surfaces are recorded: pointing at the sky adds nothing
@@ -327,12 +376,26 @@ canvas.addEventListener('pointermove', (e) => {
   }
 });
 function cancelLaser() { if (drawing) { drawing.dispose(); drawing = null; } }
-addEventListener('pointercancel', () => { if (firing) { W.gunStop(); firing = false; } });
+addEventListener('pointercancel', () => { if (firing) { W.gunStop(); firing = false; } swipe = null; drawSlashLine(null); });
 addEventListener('blur', () => { if (firing) { W.gunStop(); firing = false; } });
 addEventListener('pointerup', (e) => {
   if (firing) { W.gunStop(); firing = false; }
   if (!down || e.pointerId !== down.id) return;
   if (tool === 'mg') { down = null; return; }
+  if (swipe) {
+    const s = swipe; swipe = null; drawSlashLine(null);
+    if (!down.multi) {
+      // a swipe cuts along itself; a tap cuts a short stroke through the tapped point (direction: COMBO)
+      if (Math.hypot(e.clientX - s.x, e.clientY - s.y) > 24) W.slash(s.x, s.y, e.clientX, e.clientY);
+      else {
+        const now = performance.now(); if (now - comboT > 1200) combo = 0; comboT = now;
+        const ang = THREE.MathUtils.degToRad(COMBO[combo++ % COMBO.length] + (Math.random() - 0.5) * 12);
+        const r = Math.min(innerWidth, innerHeight) * 0.18, dx = Math.cos(ang) * r, dy = Math.sin(ang) * r;
+        W.slash(s.x - dx, s.y - dy, s.x + dx, s.y + dy);
+      }
+    }
+    down = null; return;
+  }
   const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y), dur = performance.now() - down.t;
   if (drawing) {
     const path = drawing; drawing = null;
@@ -391,30 +454,15 @@ function simulate(realDt) {
   pa.weapons += t1 - t0; pa.physics += t2 - t1; pa.structure += t3 - t2; pa.terrain += t4 - t3; pa.fx += t5 - t4; pa.n++;
 }
 // ---------------------------------------------------------------- free movement
-// WASD / arrow keys on desktop, a thumb joystick on touch screens: slide the camera and its
+// WASD / arrow keys on desktop (two fingers on touch screens move the view): slide the camera and its
 // orbit point together across the ground, in the direction the camera faces.
 const moveKeys = new Set();
-const joyV = { x: 0, y: 0 };
 addEventListener('keydown', (e) => { if (e.target && e.target.tagName === 'INPUT') return; const k = e.key.toLowerCase(); if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'q', 'e'].includes(k)) moveKeys.add(k); });
 addEventListener('keyup', (e) => moveKeys.delete(e.key.toLowerCase()));
 addEventListener('blur', () => moveKeys.clear());
-{
-  const joy = $('joy'), knob = joy.querySelector('i');
-  let id = null, cx = 0, cy = 0;
-  const set = (x, y) => {
-    let dx = x - cx, dy = y - cy; const r = Math.hypot(dx, dy), R = 40;
-    if (r > R) { dx *= R / r; dy *= R / r; }
-    knob.style.transform = `translate(${dx}px,${dy}px)`;
-    joyV.x = dx / R; joyV.y = dy / R;
-  };
-  joy.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); id = e.pointerId; joy.setPointerCapture(id); const r = joy.getBoundingClientRect(); cx = r.left + r.width / 2; cy = r.top + r.height / 2; set(e.clientX, e.clientY); });
-  joy.addEventListener('pointermove', (e) => { if (e.pointerId === id) set(e.clientX, e.clientY); });
-  const end = (e) => { if (e.pointerId !== id) return; id = null; joyV.x = joyV.y = 0; knob.style.transform = ''; };
-  joy.addEventListener('pointerup', end); joy.addEventListener('pointercancel', end);
-}
 const _fw = new THREE.Vector3(), _rt = new THREE.Vector3(), _mv = new THREE.Vector3();
 function moveCamera(dt) {
-  let f = -joyV.y, r = joyV.x, u = 0;
+  let f = 0, r = 0, u = 0;
   if (moveKeys.has('w') || moveKeys.has('arrowup')) f += 1;
   if (moveKeys.has('s') || moveKeys.has('arrowdown')) f -= 1;
   if (moveKeys.has('d') || moveKeys.has('arrowright')) r += 1;
@@ -438,10 +486,13 @@ function moveCamera(dt) {
 // The views are framed for landscape screens. FOV is vertical, so on a portrait phone (aspect ~0.46)
 // 45° leaves barely 22° across and the buildings fall off the sides: widen the vertical FOV until
 // the horizontal coverage matches a 1.25:1 screen, capped at 72° to keep edge distortion mild.
-const H_MIN = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(45) / 2) * 1.25);
+const H_MIN = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(STYLE.fov) / 2) * 1.25);
+// the camera stands ~1.45x farther back, so a 50° cap covers about as much width as 72° does
+// at the normal distance while keeping the flatter miniature perspective
+const FOV_CAP = 50;
 function fitFov(f) {
   const need = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(H_MIN / 2) / camera.aspect));
-  return Math.max(f, Math.min(need, 72));
+  return Math.max(f, Math.min(need, FOV_CAP));
 }
 function draw(realDt) {
   B.flushGPU();
@@ -481,23 +532,23 @@ function hud(dt) {
   run.lastRatio = raw;
   const all = cleared === tg.length;
   const pct = all ? 100 : Math.min(99, raw * 100);
-  $('pct').textContent = (pct < 10 ? pct.toFixed(1) : Math.floor(pct)) + '%';
-  $('pctbar').style.width = clamp(pct, 0, 100) + '%';
+  setText('pct', (pct < 10 ? pct.toFixed(1) : Math.floor(pct)) + '%');
+  setStyle('pctbar', 'width', clamp(pct, 0, 100) + '%');
   if (all && run.on && !run.done) runComplete();
-  $('fallen').textContent = `목표 ${cleared}/${tg.length}동 · 전체 ${Math.floor(S.destructionRatio() * 100)}%`;
+  setText('fallen', `목표 ${cleared}/${tg.length}동 · 전체 ${Math.floor(S.destructionRatio() * 100)}%`);
   updateMarkers(true);
-  $('combo').textContent = lastAttack;
+  setText('combo', lastAttack);
 }
 let last = performance.now(), tmAcc = 0;
 function runTick(dt) {
-  if (!run.on || run.done || !$('veil').classList.contains('hide') || document.hidden) return;
+  if (paused || !run.on || run.done || !$('veil').classList.contains('hide') || document.hidden) return;
   run.t += dt; tmAcc += dt;
   if (tmAcc > 0.1) { tmAcc = 0; $('tm').textContent = fmtT(run.t); }
 }
 function frame(now) {
   const t0 = performance.now(), gap = (now - last) / 1000;
   const realDt = Math.min(0.05, gap); last = now;
-  simulate(realDt);
+  if (!paused) simulate(realDt);
   draw(realDt);
   updateMarkers(false);
   Replay.tick(renderer.domElement, { map: world.MAP.title, time: fmtT(run.t) });
@@ -511,50 +562,16 @@ function frame(now) {
 
 // ---------------------------------------------------------------- boot
 const startBtn = $('startBtn');
-startBtn.disabled = false; startBtn.textContent = '파괴 시작';
+// the button says 불러오는 중… (index.html) until the shaders are ready and the loop runs (see W.warmup below)
+const enableStart = () => { startBtn.disabled = false; if (startBtn.textContent === '불러오는 중…') startBtn.textContent = '파괴 시작'; };
+if (IS_TEST) enableStart();
 startBtn.addEventListener('click', () => { A.init(); $('veil').classList.add('hide'); });
-// map chooser: search box + list; switching maps reloads with ?map=<id>
-const norm = (t) => t.toLowerCase().replace(/\s+/g, '');
-function renderMaps(q = '') {
-  const box = $('maps'); box.textContent = '';
-  const nq = norm(q);
-  const list = world.MAPS.filter((m) => !nq || norm(m.title + m.sub + m.id + (m.kw || '') + (m.near || []).join(' ')).includes(nq));
-  for (const m of list) {
-    const b = document.createElement('button');
-    b.className = m.id === world.MAP.id ? 'on' : '';
-    b.textContent = m.title; const sm = document.createElement('small'); sm.textContent = m.sub; b.appendChild(sm);
-    // searched for a neighbour company: say it is in this map
-    const hit = nq && (m.near || []).find((n) => norm(n).includes(nq) || nq.includes(norm(n).replace(/\(.*\)/, '')));
-    if (hit) { const h = document.createElement('small'); h.className = 'near'; h.textContent = '📍 ' + hit + ' 포함 맵'; b.appendChild(h); }
-    b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (m.id === world.MAP.id) { closeVeil(); return; }
-      const qs = new URLSearchParams(location.search); qs.set('map', m.id); location.search = qs.toString();
-    });
-    box.appendChild(b);
-  }
-  if (!list.length) {
-    const d = document.createElement('div'); d.className = 'none'; d.textContent = `"${q}" 맵은 아직 없어요. 표가 많은 회사부터 만들어요.`; box.appendChild(d);
-    const v = document.createElement('button'); v.className = 'wishbtn'; v.textContent = `🗳 "${q.trim().slice(0, 30)}" 만들어 주세요`;
-    v.addEventListener('click', async (e) => { e.stopPropagation(); v.disabled = true; const j = await wishVote(q.trim()); v.textContent = j.ok ? (j.already ? `이미 투표했어요 · 지금 ${j.votes}표` : `투표했어요! 지금 ${j.votes}표`) : j.error; });
-    box.appendChild(v);
-  }
-}
-renderMaps();
-$('msearch').addEventListener('input', (e) => renderMaps(e.target.value));
-$('msearch').addEventListener('keydown', (e) => {
-  e.stopPropagation(); // typing must not trigger weapon hotkeys
-  if (e.key === 'Enter') { const first = $('maps').querySelector('button'); if (first) first.click(); }
-  if (e.key === 'Escape') closeVeil();
-});
-function openVeil() { cancelLaser(); $('veil').classList.remove('hide'); startBtn.textContent = '계속하기'; setTimeout(() => $('msearch').focus(), 50); }
+function openVeil() { cancelLaser(); $('veil').classList.remove('hide'); startBtn.textContent = '계속하기'; }
 function closeVeil() { $('veil').classList.add('hide'); }
-$('bMaps').addEventListener('click', (e) => { e.stopPropagation(); openVeil(); });
 // index.html is served as a static file (no Worker), so the per-map canonical link is set here
 { const id = new URLSearchParams(location.search).get('map'); const c = document.createElement('link'); c.rel = 'canonical';
   c.href = 'https://companysmash.com/' + (id && world.MAP.id === id ? '?map=' + id : ''); document.head.appendChild(c); }
 if (new URLSearchParams(location.search).has('map') && !/ 부수기 - /.test(document.title)) document.title = world.MAP.title.replace(/\s*\(.*\)$/, '') + ' 부수기 · ' + document.title; // per-map search title (e.g. 'SK하이닉스 이천캠퍼스 부수기')
-{ const logo = document.querySelector('#brand .logo'); if (logo) logo.lastChild.textContent = '부수기 · ' + world.MAP.title; }
 if (IS_TEST) $('veil').classList.add('hide');
 if (new URLSearchParams(location.search).has('clean')) document.body.classList.add('clean');
 
@@ -590,67 +607,14 @@ function embPop(list) {
   el.style.opacity = 1; clearTimeout(embPopT); embPopT = setTimeout(() => { el.style.opacity = 0; }, 3200);
   A.blip(880);
 }
-$('bEmb').addEventListener('click', (e) => { e.stopPropagation(); renderEmblems(); $('embPanel').classList.add('show'); });
+function openEmblems() { renderEmblems(); $('embPanel').classList.add('show'); }
 $('embClose').addEventListener('click', () => $('embPanel').classList.remove('show'));
 $('embPanel').addEventListener('pointerdown', (e) => { e.stopPropagation(); if (e.target === $('embPanel')) $('embPanel').classList.remove('show'); });
 
 // ---------------------------------------------------------------- result / ranking / sharing
 Replay.init();
-const NAME_KEY = 'smash.nick';
-try { $('rsName').value = localStorage.getItem(NAME_KEY) || ''; } catch (e) { /* storage blocked */ }
-Replay.onClip((c) => {
-  const v = $('rsVideo'); v.src = c.url; v.style.display = 'block';
-  if ($('result').classList.contains('show')) v.play().catch(() => {});
-});
 const singleWeapon = () => (run.weapons.size === 1 ? [...run.weapons][0] : null);
-const BOARD_NAME = { all: '종합', mg: '기관총', hammer: '망치', bomb: '폭탄', missile: '미사일', laser: '레이저', meteor: '운석', hits: '🏢 회사 파괴 랭킹' };
-let boardTab = 'all';
-function renderTabs() {
-  const box = $('boardTabs'); box.textContent = '';
-  for (const w of [...Rank.BOARDS, 'hits']) {
-    const b = document.createElement('button'); b.textContent = BOARD_NAME[w]; b.className = w === boardTab ? 'on' : '';
-    b.addEventListener('click', (e) => { e.stopPropagation(); boardTab = w; renderTabs(); renderBoard(); });
-    box.appendChild(b);
-  }
-}
-// every player's damage summed per map ("가장 많이 부서진 곳")
-async function renderHits() {
-  const { kind, rows } = await Rank.hits();
-  const box = $('board'); box.textContent = '';
-  const h = document.createElement('div'); h.className = 'h'; h.textContent = '🏢 회사 파괴 랭킹';
-  const sp = document.createElement('span'); sp.textContent = kind === 'online' ? '전체 이용자 누적 피해액' : kind === 'shared' ? '테스트 링크 이용자 누적' : '내 누적 (이 기기)'; h.appendChild(sp); box.appendChild(h);
-  const byKey = (r) => world.MAPS.find((m) => m.id === r.map || m.id.replace(/[^a-zA-Z0-9]/g, '_') === r.key);
-  const list = rows.map((r) => ({ ...r, m: byKey(r) })).filter((r) => r.m && r.dmg > 0);
-  if (!list.length) { const d = document.createElement('div'); d.className = 'empty'; d.textContent = '아직 집계된 피해가 없어요. 첫 피해를 남겨 보세요!'; box.appendChild(d); return; }
-  const ol = document.createElement('ol');
-  list.slice(0, 10).forEach((r, i) => {
-    const li = document.createElement('li'); if (r.m.id === world.MAP.id) li.className = 'me';
-    const n = document.createElement('i'); n.textContent = i + 1;
-    const nm = document.createElement('span'); nm.textContent = r.m.title + (r.clears ? ' · 완파 ' + r.clears.toLocaleString() + '회' : '');
-    const t = document.createElement('b'); t.textContent = Score.won(r.dmg);
-    li.append(n, nm, t); ol.appendChild(li);
-  });
-  box.appendChild(ol);
-}
-async function renderBoard() {
-  if (boardTab === 'hits') return renderHits();
-  const m = await Rank.mode();
-  const rows = await Rank.top(world.MAP.id, 10, boardTab);
-  const where = m.kind === 'online' ? '전체 랭킹' : m.kind === 'shared' ? '전체 랭킹 (테스트 링크)' : '내 기록 (이 기기)';
-  const box = $('board'); box.textContent = '';
-  const h = document.createElement('div'); h.className = 'h'; h.textContent = '🏆 ' + world.MAP.title + (boardTab === 'all' ? '' : ' · ' + BOARD_NAME[boardTab] + '만');
-  const sp = document.createElement('span'); sp.textContent = where; h.appendChild(sp); box.appendChild(h);
-  if (!rows.length) { const d = document.createElement('div'); d.className = 'empty'; d.textContent = boardTab === 'all' ? '아직 완파 기록이 없어요. 첫 기록의 주인공이 되어 보세요.' : BOARD_NAME[boardTab] + '만으로 완파한 기록이 아직 없어요. 도전해 보세요!'; box.appendChild(d); return; }
-  const ol = document.createElement('ol');
-  rows.forEach((r, i) => {
-    const li = document.createElement('li'); if (r.me) li.className = 'me';
-    const n = document.createElement('i'); n.textContent = i + 1;
-    const nm = document.createElement('span'); nm.textContent = r.name;
-    const t = document.createElement('b'); t.textContent = fmtT(r.ms / 1000);
-    li.append(n, nm, t); ol.appendChild(li);
-  });
-  box.appendChild(ol);
-}
+const BOARD_NAME = { all: '종합', mg: '기관총', hammer: '망치', bomb: '폭탄', missile: '미사일', laser: '레이저', meteor: '운석', sword: '칼', hits: '🏢 회사 파괴 랭킹' };
 function shareText() {
   const url = new URL(location.href); url.search = ''; url.searchParams.set('map', world.MAP.id);
   if (run.done && !run.nuke) url.searchParams.set('vs', Math.round(run.t * 1000));
@@ -661,69 +625,21 @@ function shareText() {
     (run.done && !run.nuke ? '👉 이 기록 깨 보기: ' : '👉 ') + url.toString(),
   ].join('\n');
 }
-async function showResult(fromButton = false) {
-  const done = run.done;
-  $('rsEyebrow').textContent = done ? '완파 기록' : '랭킹';
-  $('rsTitle').textContent = done ? '완파! ' + world.MAP.title : world.MAP.title;
-  $('rsTime').textContent = done ? fmtT(run.t) : '';
-  $('rsTime').style.display = done ? '' : 'none';
-  const st = $('rsStats'); st.textContent = '';
-  if (done) for (const [k, v] of [['피해액', Score.won(Score.state.score)], ['직급', Score.rankInfo().id], ['공격', run.shots + '회'], ['무기', singleWeapon() ? BOARD_NAME[singleWeapon()] + '만' : [...run.weapons].map((w) => (W.TOOLS[w] ? W.TOOLS[w].name : w)).join('·')]]) {
-    const sp = document.createElement('span'); sp.append(k + ' '); const b = document.createElement('b'); b.textContent = v; sp.appendChild(b); st.appendChild(sp);
-  }
-  const m = await Rank.mode();
-  let note = '';
-  if (done && run.nuke) note = '☢ 핵폭탄을 쓴 기록은 랭킹에 올라가지 않아요. 핵 없이 도전해 보세요!';
-  else if (done && vsMs) note = run.t * 1000 < vsMs ? '🎉 도전 성공! 친구 기록 ' + fmtT(vsMs / 1000) + '보다 빨라요' : '아깝다! 친구 기록은 ' + fmtT(vsMs / 1000);
-  else if (done && m.kind === 'local') note = '온라인 랭킹은 사이트 오픈 후 열려요. 지금은 이 기기에만 저장돼요.';
-  $('rsNote').textContent = note;
-  $('rsSubmitRow').style.display = done && !run.nuke && !run.submitted ? 'flex' : 'none';
-  $('rsClip').style.display = Replay.supported ? '' : 'none';
-  $('rsClip').disabled = !Replay.latest();
-  $('rsShare').style.display = done ? '' : 'none';
-  const v = $('rsVideo'); const c = Replay.latest();
-  if (c && done) { if (v.src !== c.url) v.src = c.url; v.style.display = 'block'; v.play().catch(() => {}); } else { v.style.display = 'none'; v.pause(); }
-  const re = $('rsEmb'); re.textContent = '';
-  if (done && run.newEmb) for (const r of run.newEmb) if (embById[r.id]) re.appendChild(embEl(embById[r.id], r.tier));
-  boardTab = done && !run.nuke && singleWeapon() && Rank.BOARDS.includes(singleWeapon()) ? singleWeapon() : 'all';
-  renderTabs();
-  $('result').classList.add('show');
-  renderBoard();
-}
-function hideResult() { $('result').classList.remove('show'); $('rsVideo').pause(); }
-$('result').addEventListener('pointerdown', (e) => { e.stopPropagation(); if (e.target === $('result')) hideResult(); });
-$('rsClose').addEventListener('click', hideResult);
-$('rsAgain').addEventListener('click', () => { hideResult(); resetWorld(); });
-$('bRank').addEventListener('click', (e) => { e.stopPropagation(); showResult(true); });
-$('rsSubmit').addEventListener('click', async () => {
-  if (!run.done || run.nuke || run.submitted) return;
-  const name = $('rsName').value.trim();
-  if (!name) { $('rsName').focus(); return; }
-  try { localStorage.setItem(NAME_KEY, name); } catch (e) { /* storage blocked */ }
-  $('rsSubmit').disabled = true;
-  const r = await Rank.submit({ map: world.MAP.id, name, ms: run.t * 1000, dmg: Score.state.score, shots: run.shots, weapon: singleWeapon() });
-  $('rsSubmit').disabled = false;
-  if (r.ok) { run.submitted = true; $('rsSubmitRow').style.display = 'none'; }
-  $('rsNote').textContent = r.note || (r.ok ? (singleWeapon() ? '종합 + ' + BOARD_NAME[singleWeapon()] + ' 랭킹에 등록했어요!' : '랭킹에 등록했어요!') : '등록하지 못했어요');
-  renderBoard();
-});
-$('rsShare').addEventListener('click', async () => {
-  const text = shareText();
-  try { if (navigator.share) { await navigator.share({ text }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
-  try { await navigator.clipboard.writeText(text); $('rsNote').textContent = '결과를 복사했어요. 카톡에 붙여넣어 보내 보세요!'; }
-  catch (e) { prompt('아래 내용을 복사해 보내세요', text); }
-});
-$('rsClip').addEventListener('click', async () => {
+function showResult() { return TOY.showResult(); }
+/** the latest collapse clip: share it where the device can, else download it */
+async function saveClip() {
   const c = Replay.latest(); if (!c) return;
   const fname = `회사부수기_${world.MAP.id}_${fmtT(run.t).replace(/[:.]/g, '')}.${c.ext}`;
   const file = new File([c.blob], fname, { type: c.blob.type });
   try { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], text: shareText() }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
   const a = document.createElement('a'); a.href = c.url; a.download = fname; document.body.appendChild(a); a.click(); a.remove();
-});
+}
 if (vsMs) toast('친구 기록 ' + fmtT(vsMs / 1000) + ' — 이겨 보세요!');
 
 // test / debugging hooks (deterministic stepping when ?test=1)
-renderSupport(document.getElementById('support')); renderSupport(document.getElementById('rsSupport'));
+TOY = initToyUI({ world, Score, Rank, Emblem, W, Replay, run, fmtT, toast, resetWorld, shareText, COARSE,
+  setPaused: (v) => { paused = v; }, isMuted: () => A.isMuted(), cycleView, toggleSound, openEmblems, openVeil, openSheet, saveClip });
+setTool(tool); // again, now with the toy UI's short hints
 window.SMASH = {
   THREE, scene, camera, controls, renderer, QUALITY, DRS, terrain, B, P, S, SG, props, FX, W, setView, pickScreen, pickRay,
   setFov(f) { baseFov = f; },
@@ -734,6 +650,7 @@ window.SMASH = {
   hud(dt = 1 / 60) { hudAcc = 1; hud(dt); },
   gunWorld(x, y, z, sec) { const h = surfaceBelow(x, z, y); if (!h) return null; W.gunStart(h); return h.point.toArray(); },
   gunStop() { W.gunStop(); },
+  slashScreen(x0, y0, x1, y1) { return !!W.slash(x0, y0, x1, y1); },
   fireAt(t, x, y) { const h = pickScreen(x, y); if (!h) return null; W.fire(t, h, pickNear); return { kind: h.kind, point: h.point.toArray() }; },
   fireWorld(t, x, y, z) { const h = surfaceBelow(x, z, y); if (!h) return null; W.fire(t, h, pickNear); return { kind: h.kind, point: h.point.toArray() }; },
   laserScreen(points) { const p = new W.LaserPath(); let miss = 0; for (const [x, y] of points) { const h = pickScreen(x, y); if (h && h.kind !== 'prop') p.add(h.point, h.normal); else miss++; } const n = p.pts.length; W.fireLaser(p); return { recorded: n, missed: miss }; },
@@ -742,5 +659,7 @@ window.SMASH = {
     return { blocks: B.stats(), statics, bodies: P.bodies.size, awake: P.awakeCount(), clusters: P.clusters.length, fx: FX.counts(), weapons: { ...W.stats }, actions: W.actions.length, destruction: +(S.destructionRatio() * 100).toFixed(2), score: Score.state.score, rank: Score.rankInfo().id, fps: Math.round(fps), perf: { ...perf } };
   },
 };
-if (!IS_TEST) requestAnimationFrame(frame);
+// the loop starts once every shader is compiled and has been drawn once (W.warmup): the start card is up
+// meanwhile, so nothing is missed, and no frame stalls later on a first use. Tests step frames themselves.
+if (!IS_TEST) { const go = () => { performance.mark('loop-start'); enableStart(); if (TOY) TOY.ready(); requestAnimationFrame((t) => { last = t; frame(t); }); }; W.warmup(renderer).then(go, go); }
 window.__ready = true;

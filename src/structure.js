@@ -10,6 +10,10 @@ import * as P from './physics.js';
 import * as terrain from './terrain.js';
 import { rand, clamp } from './util.js';
 
+// every building that isn't a target gets one of these pastel paints
+const PAINT = [[0.98, 0.58, 0.66], [1.0, 0.70, 0.48], [1.0, 0.85, 0.45], [0.50, 0.88, 0.72], [0.52, 0.76, 1.0], [0.72, 0.64, 1.0], [1.0, 0.52, 0.48], [0.66, 0.88, 0.50]];
+let paintN = 0;
+
 export const buildings = [];
 const dirty = new Set();
 export const events = { glass: null, chunk: null };
@@ -29,6 +33,7 @@ export class Building {
     this.hold = opt.hold ?? null; // chance a standing chunk holds a falling one (default 0.2 / 0.35 tough); slim tall slabs need more
     this.tint = opt.tint || null; // facade tint [r,g,b,wall] carried by every piece of the building
     this.target = !!opt.target;
+    this.paint = !this.target ? PAINT[Math.floor(Math.abs(Math.sin(++paintN * 12.9898) * 43758.5453) % 1 * PAINT.length)] : null;
     this.tag = opt.tag || null; // 'name': a named building (company / building name) gets a floating name tag // the building(s) the map is about: 파괴율 / time attack count only these
     this.levelCount0 = new Map();
     this.levelVol0 = new Map();
@@ -566,6 +571,89 @@ function toCluster(list, mode, opt) {
   for (const p of list) if (isStatic(p)) detach(p);
   // big masses come down as floor-slab sized blocks
   return new P.Cluster(coarsen(list, list.length > 150 ? 3 : 2), mode, opt);
+}
+
+/**
+ * Sword: cut along the plane through o with normal n, wherever inside(pos) allows (the stretch of the
+ * screen the slash covered). Each crossed chunk is split along the axis closest to the plane normal at
+ * the plane's position over its centre, so a slanted cut becomes a fine staircase. A building cut all
+ * the way across (no crossed chunk outside the slash) loses everything above the cut: on a shallow cut
+ * that part tips off over the low edge of the slope; a steep cut is handled like a laser cut.
+ * Returns [{ b, pts, severed, glass }] for the effects.
+ */
+const SLASH_KERF = 0.3;
+/** standing chunks of b that the plane crosses: those inside the slash, and how many outside it */
+function slashHits(b, o, n, inside) {
+  const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
+  // quick reject: the plane misses the building's box
+  const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2, cy = b.top / 2;
+  const rb = ax * (b.x1 - b.x0) / 2 + ay * b.top / 2 + az * (b.z1 - b.z0) / 2;
+  if (!b.statics.size || Math.abs((cx - o.x) * n.x + (cy - o.y) * n.y + (cz - o.z) * n.z) > rb + 1) return null;
+  const hit = []; let outside = 0;
+  for (const p of b.statics) {
+    const d = (p.pos.x - o.x) * n.x + (p.pos.y - o.y) * n.y + (p.pos.z - o.z) * n.z;
+    if (Math.abs(d) > ax * p.hx + ay * p.hy + az * p.hz) continue;
+    if (inside(p.pos)) hit.push(p); else outside++;
+  }
+  return hit.length ? { hit, outside } : null;
+}
+/** the buildings a slash would cut, nearest first, with the distance from o to the nearest cut chunk */
+export function slashPlan(o, n, inside) {
+  const out = [];
+  for (const b of buildings) {
+    const h = slashHits(b, o, n, inside);
+    if (h) out.push({ b, d: Math.min(...h.hit.map((p) => p.pos.distanceTo(o))) });
+  }
+  return out.sort((a, c) => a.d - c.d);
+}
+export function slash(o, n, inside, push, only = null) {
+  if (n.y < 0) n = n.clone().negate();
+  const sd = (v) => (v.x - o.x) * n.x + (v.y - o.y) * n.y + (v.z - o.z) * n.z;
+  const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
+  const axis = ay >= ax && ay >= az ? 'y' : ax >= az ? 'x' : 'z';
+  const out = [];
+  for (const b of only ? [only] : buildings) {
+    const h = slashHits(b, o, n, inside);
+    if (!h) continue;
+    const { hit, outside } = h;
+    const pts = [], others = { x: axis === 'x' ? 'y' : 'x', z: axis === 'z' ? 'y' : 'z' };
+    let glass = 0;
+    for (const p of hit) {
+      const at = p.pos[axis] - sd(p.pos) / n[axis]; // where the plane crosses this chunk's centre line
+      pts.push(p.pos.clone().addScaledVector(n, -sd(p.pos)));
+      if (p.kind === B.K.CURTAIN || p.kind === B.K.RIBBON || p.kind === B.K.DARKGLASS) glass++;
+      if (p['h' + axis] < 0.4) continue; // too thin to split: it goes with whichever side its centre is on
+      detach(p);
+      const parts = B.sliceStatic(p, axis, at, SLASH_KERF);
+      B.removePiece(p);
+      for (const k of parts) { k.bld = b; b.statics.add(k); SG.add(k); }
+    }
+    b.hits = (b.hits || 0) + 1;
+    dirty.add(b);
+    let severed = false;
+    if (!outside) {
+      if (ay < 0.35) { // steep: two halves standing side by side, like a laser kerf
+        noteCut(b, pts[0], new THREE.Vector3(-n.z, 0, n.x).normalize());
+      } else {
+        const top = [...b.statics].filter((p) => sd(p.pos) > 0 && inside(p.pos));
+        if (top.length) {
+          const bb = boundsOf(top);
+          // tip toward the low side of the cut; a nearly level cut tips the way the blade travelled
+          const dir = new THREE.Vector3(n.x, 0, n.z);
+          if (dir.length() < 0.15) dir.set(push.x, 0, push.z);
+          dir.normalize();
+          const mx = (bb.x0 + bb.x1) / 2, mz = (bb.z0 + bb.z1) / 2;
+          const ext = Math.abs(dir.x) * (bb.x1 - bb.x0) / 2 + Math.abs(dir.z) * (bb.z1 - bb.z0) / 2;
+          const pivot = new THREE.Vector3(mx + dir.x * ext, bb.y0, mz + dir.z * ext);
+          toCluster(top, 'hinge', { pivot, axis: new THREE.Vector3(0, 1, 0).cross(dir).normalize(), omega0: 0.45 });
+          severed = true;
+          if (top.length > b.statics.size * 0.3) b.collapsed = true;
+        }
+      }
+    }
+    out.push({ b, pts, severed, glass });
+  }
+  return out;
 }
 
 /** after a laser cut: free-standing slender parts topple away from the cut */

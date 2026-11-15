@@ -5,7 +5,7 @@
 const KEY = 'smash.emblems';
 export const TIER = { 1: { n: '동', c: '#c98a5c' }, 2: { n: '은', c: '#c9d2da' }, 3: { n: '금', c: '#f2c94c' } };
 // time limits for silver / gold (seconds); bronze = any clear without the nuke
-const LIMIT = { silver: 180, gold: 90 };
+export const LIMIT = { silver: 180, gold: 90 };
 
 const WEAPON = { mg: '기관총', hammer: '망치', bomb: '폭탄', missile: '미사일', laser: '레이저', meteor: '운석' };
 

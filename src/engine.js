@@ -1,30 +1,35 @@
-// Renderer, camera, sky dome with clouds, image-based lighting, sun, post-processing.
+// Renderer, camera, the toy-miniature (diorama) look: painted sky, soft lighting, tilt-shift post-processing.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { clamp } from './util.js';
 
 const QS = new URLSearchParams(location.search);
 export const IS_TEST = QS.has('test');
 export const COARSE = matchMedia('(pointer: coarse)').matches;
+// The camera looks down at a model city: a narrow lens from farther away (fov), and a fake tilt-shift
+// blur at the top and bottom of the screen (tilt; ?tilt=0 turns it off).
+export const STYLE = { fov: 30, tilt: QS.get('tilt') !== '0' };
 export const QUALITY = { level: QS.get('q') || (COARSE ? 'low' : 'high') };
-QUALITY.bloom = QUALITY.level !== 'low' && QS.get('bloom') !== '0';
 QUALITY.shadowSize = QUALITY.level === 'low' ? 2048 : 4096;
+const POST = STYLE.tilt;
 
 export const scene = new THREE.Scene();
-export const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.5, 5000);
+export const camera = new THREE.PerspectiveCamera(STYLE.fov, innerWidth / innerHeight, 0.5, 5000);
 
 export const renderer = new THREE.WebGLRenderer({
-  antialias: !QUALITY.bloom, powerPreference: 'high-performance', preserveDrawingBuffer: IS_TEST,
+  antialias: !POST, powerPreference: 'high-performance', preserveDrawingBuffer: IS_TEST,
 });
 const PR = Math.min(devicePixelRatio || 1, QUALITY.level === 'low' ? 1.25 : 1.75);
 renderer.setPixelRatio(IS_TEST ? 1 : PR);
 renderer.setSize(innerWidth, innerHeight);
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
+// linear keeps the pastel colours and the blue sky clean (ACES greys them); fire simply clips to white
+renderer.toneMapping = THREE.LinearToneMapping;
+// shader error checks read the compile log back from the driver, which waits for the compile to finish:
+// keep them for tests and ?debug only
+renderer.debug.checkShaderErrors = IS_TEST || QS.has('debug');
 renderer.toneMappingExposure = 0.95;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = QUALITY.level === 'low' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
@@ -34,7 +39,7 @@ export const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.09;
 controls.minDistance = 12;
-controls.maxDistance = 1300;
+controls.maxDistance = 2000;
 controls.maxPolarAngle = Math.PI * 0.62;
 controls.zoomSpeed = 1.1;
 controls.rotateSpeed = 0.55;
@@ -43,65 +48,30 @@ controls.screenSpacePanning = false;
 controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
 controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
 
-// ---------- sky: painted cloud dome (also baked into the reflection environment)
-function noise3Factory() {
-  const perm = new Uint8Array(512);
-  const p = []; for (let i = 0; i < 256; i++) p.push(i);
-  let s = 1337;
-  for (let i = 255; i > 0; i--) { s = (s * 16807) % 2147483647; const j = s % (i + 1); [p[i], p[j]] = [p[j], p[i]]; }
-  for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
-  const h = (x, y, z) => perm[(perm[(perm[x & 255] + y) & 255] + z) & 255] / 255;
-  return (x, y, z) => {
-    const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
-    const xf = x - xi, yf = y - yi, zf = z - zi;
-    const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf), w = zf * zf * (3 - 2 * zf);
-    const l = (a, b, t) => a + (b - a) * t;
-    return l(
-      l(l(h(xi, yi, zi), h(xi + 1, yi, zi), u), l(h(xi, yi + 1, zi), h(xi + 1, yi + 1, zi), u), v),
-      l(l(h(xi, yi, zi + 1), h(xi + 1, yi, zi + 1), u), l(h(xi, yi + 1, zi + 1), h(xi + 1, yi + 1, zi + 1), u), v), w);
-  };
-}
-
+// ---------- sky: a clean studio gradient (deep sky blue overhead, pale at the horizon, blue again below
+// it, since the diorama floats) with a few round cartoon clouds; a dimmer copy lights the scene
+const HORIZON = 0xd6e7fb;
 function makeSkyTexture() {
   const W = IS_TEST ? 512 : 1024, H = W / 2;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const g = c.getContext('2d');
-  const img = g.createImageData(W, H);
-  const n3 = noise3Factory();
-  const fbm3 = (x, y, z) => { let s = 0, a = 0.5, f = 1; for (let i = 0; i < 5; i++) { s += a * n3(x * f, y * f, z * f); a *= 0.5; f *= 2.07; } return s / 0.97; };
-  for (let j = 0; j < H; j++) {
-    const lat = (0.5 - (j + 0.5) / H) * Math.PI; // +90 top
-    const el = Math.max(lat, 0) / (Math.PI / 2);   // 0 horizon .. 1 zenith
-    // sky gradient: pale hazy horizon -> soft blue zenith
-    const hr = 0.80 - 0.28 * Math.pow(el, 0.55), hg = 0.86 - 0.20 * Math.pow(el, 0.55), hb = 0.92 - 0.06 * Math.pow(el, 0.6);
-    for (let i = 0; i < W; i++) {
-      const lon = (i / W) * Math.PI * 2;
-      const dx = Math.cos(lat) * Math.cos(lon), dy = Math.sin(lat), dz = Math.cos(lat) * Math.sin(lon);
-      let r = hr, gg = hg, b = hb;
-      if (lat > -0.12) {
-        // clouds live on a flattened shell: stretch toward the horizon
-        const k = 1 / Math.max(0.12, dy + 0.1);
-        const cx = dx * k * 1.6, cz = dz * k * 1.6;
-        let d = fbm3(cx + 11.3, 3.1, cz + 7.7);
-        d = clamp((d - 0.47) * 2.6, 0, 1);
-        const fade = clamp((dy - 0.0) * 6, 0, 1);
-        d *= fade;
-        const shade = 0.78 + 0.22 * fbm3(cx * 2.3 + 1, 9.2, cz * 2.3 + 4);
-        const cr = 0.93 * shade, cg = 0.94 * shade, cb = 0.96 * shade;
-        r = r + (cr - r) * d; gg = gg + (cg - gg) * d; b = b + (cb - b) * d;
-      }
-      if (lat < 0.10) {
-        // below the horizon: a soft blend into a city/ground tone (what glass reflects low down)
-        const t = clamp((0.10 - lat) / 0.5, 0, 1), s2 = t * t * (3 - 2 * t);
-        const n = fbm3(dx * 9 + 2, dy * 9, dz * 9 + 5);
-        const gr = 0.50 + 0.08 * n, gc = 0.53 + 0.08 * n, gb = 0.55 + 0.07 * n;
-        r = r + (gr - r) * s2; gg = gg + (gc - gg) * s2; b = b + (gb - b) * s2;
-      }
-      const o = 4 * (j * W + i);
-      img.data[o] = Math.min(255, r * 255); img.data[o + 1] = Math.min(255, gg * 255); img.data[o + 2] = Math.min(255, b * 255); img.data[o + 3] = 255;
+  const grd = g.createLinearGradient(0, 0, 0, H);
+  grd.addColorStop(0, '#5f9ff0'); grd.addColorStop(0.32, '#9cc6f6'); grd.addColorStop(0.5, '#d6e7fb');
+  grd.addColorStop(0.6, '#bcd6f6'); grd.addColorStop(1, '#8fb9ec');
+  g.fillStyle = grd; g.fillRect(0, 0, W, H);
+  let s = 4242; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  const k = W / 1024;
+  for (let i = 0; i < 18; i++) {
+    const x = rnd() * W, y = H * 0.5 - (14 + rnd() * 48) * k, n = 3 + Math.floor(rnd() * 4), r = (9 + rnd() * 9) * k;
+    const puffs = [];
+    for (let j = 0; j < n; j++) puffs.push([x + (j - (n - 1) / 2) * r * 1.15 + (rnd() - 0.5) * r * 0.4, y - Math.sin((j + 0.5) / n * Math.PI) * r * 0.7, r * (0.75 + 0.5 * Math.sin((j + 0.5) / n * Math.PI))]);
+    for (const dx of [0, -W, W]) { // wrap around the seam
+      g.fillStyle = 'rgba(200,218,240,0.9)';
+      for (const [px, py, pr] of puffs) { g.beginPath(); g.arc(px + dx, py + pr * 0.18, pr, 0, 7); g.fill(); }
+      g.fillStyle = '#ffffff';
+      for (const [px, py, pr] of puffs) { g.beginPath(); g.arc(px + dx, py - pr * 0.06, pr * 0.94, 0, 7); g.fill(); }
     }
   }
-  g.putImageData(img, 0, 0);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.mapping = THREE.EquirectangularReflectionMapping;
@@ -112,18 +82,24 @@ export const skyTex = makeSkyTexture();
 scene.background = skyTex;
 scene.backgroundIntensity = 1.0;
 {
+  // the scene is lit by a dimmer copy of the sky (about half, linear): with the full sky as fill the shadow
+  // sides came out nearly as bright as the sunlit ones and every building looked flat and washed out
   const pmrem = new THREE.PMREMGenerator(renderer);
-  const env = pmrem.fromEquirectangular(skyTex).texture;
-  scene.environment = env;
+  const img = skyTex.image, c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+  const g = c.getContext('2d'); g.drawImage(img, 0, 0); g.fillStyle = 'rgba(0,0,0,0.24)'; g.fillRect(0, 0, c.width, c.height);
+  const src = new THREE.CanvasTexture(c); src.colorSpace = THREE.SRGBColorSpace; src.mapping = THREE.EquirectangularReflectionMapping;
+  scene.environment = pmrem.fromEquirectangular(src).texture;
+  src.dispose();
   pmrem.dispose();
 }
-export const fog = new THREE.Fog(0xc6d2dc, 600, 2600);
+export const fog = new THREE.Fog(HORIZON, 1400, 4200);
 scene.fog = fog;
 
 // ---------- lights
-export const hemi = new THREE.HemisphereLight(0xdfeaf5, 0x6b7a66, 0.75);
+// a cool fill, kept low enough that the sun still models the buildings
+export const hemi = new THREE.HemisphereLight(0xeef4ff, 0xb9b2a4, 0.6);
 scene.add(hemi);
-export const sun = new THREE.DirectionalLight(0xfff2e2, 2.6);
+export const sun = new THREE.DirectionalLight(0xfff2e2, 3.0);
 sun.position.set(-160, 260, 190);
 sun.target.position.set(0, 0, 0);
 sun.castShadow = true;
@@ -171,29 +147,77 @@ export function updateLights(dt) {
 }
 
 // ---------- post
-export let composer = null, bloom = null;
-if (QUALITY.bloom) {
-  const rt = new THREE.WebGLRenderTarget(innerWidth * renderer.getPixelRatio(), innerHeight * renderer.getPixelRatio(), { type: THREE.HalfFloatType, samples: 4 });
+// Fake tilt-shift: a sharp band through the middle of the screen, a blur that grows toward
+// the top and bottom edges, as two separable passes (horizontal, then vertical). The vertical pass also
+// does the tone mapping and sRGB output, so the pipeline is scene -> H -> V with no OutputPass, and
+// pixels inside the sharp band cost one texture read per pass. Blur radius is in CSS pixels.
+// The scene writes alpha 1 everywhere except hand-held objects (see keepSharp), which write 0: those
+// pixels are not blurred, and the blur around them leaves them out so they don't bleed into the background.
+const TILT_PX = 3.2, TILT_BAND = 0.14;
+const tiltShader = (out) => ({
+  defines: out ? { OUT: '' } : {},
+  uniforms: { tDiffuse: { value: null }, uStep: { value: new THREE.Vector2() }, uAmt: { value: 1 } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; uniform vec2 uStep; uniform float uAmt; varying vec2 vUv;
+    vec4 tap(vec2 uv, float w) { vec4 t = texture2D(tDiffuse, uv); return vec4(t.rgb * t.a, t.a) * w; }
+    void main(){
+      float d = clamp((abs(vUv.y - 0.5) - ${TILT_BAND.toFixed(3)}) / ${(0.5 - TILT_BAND).toFixed(3)}, 0.0, 1.0);
+      vec4 s = texture2D(tDiffuse, vUv);
+      float k = d * d * uAmt * s.a;
+      if (k >= 0.01) {
+        vec2 o = uStep * k;
+        vec4 a = tap(vUv, 0.1633);
+        a += tap(vUv - o, 0.1531) + tap(vUv + o, 0.1531);
+        a += tap(vUv - 2.0 * o, 0.12245) + tap(vUv + 2.0 * o, 0.12245);
+        a += tap(vUv - 3.0 * o, 0.0918) + tap(vUv + 3.0 * o, 0.0918);
+        a += tap(vUv - 4.0 * o, 0.051) + tap(vUv + 4.0 * o, 0.051);
+        s.rgb = a.rgb / a.a;
+      }
+      gl_FragColor = s;
+      #ifdef OUT
+      gl_FragColor.a = 1.0;
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+      #endif
+    }`,
+});
+/** keep a hand-held object (the gun rig) out of the tilt-shift blur by having it write alpha 0 */
+export function keepSharp(m) {
+  if (!STYLE.tilt) return;
+  m.onBeforeCompile = (sh) => { sh.fragmentShader = sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor.a = 0.0;'); };
+}
+export let composer = null;
+const tilt = [];
+function sizeTilt() { if (tilt.length) { tilt[0].uniforms.uStep.value.set(TILT_PX / innerWidth, 0); tilt[1].uniforms.uStep.value.set(0, TILT_PX / innerHeight); } }
+if (POST) {
+  // the image clips anyway (no bloom), so an 8-bit sRGB target (no banding in the sky gradient) is enough
+  // and halves the bandwidth of the multisampled scene buffer
+  const rt = new THREE.WebGLRenderTarget(innerWidth * renderer.getPixelRatio(), innerHeight * renderer.getPixelRatio(), { type: THREE.UnsignedByteType, colorSpace: THREE.SRGBColorSpace, samples: 4 });
   composer = new EffectComposer(renderer, rt);
   composer.addPass(new RenderPass(scene, camera));
-  // any NaN / overflowing HDR pixel would be blurred by the bloom into large black squares
-  composer.addPass(new ShaderPass({
-    uniforms: { tDiffuse: { value: null } },
-    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-    fragmentShader: `uniform sampler2D tDiffuse; varying vec2 vUv;
-      void main(){ vec4 c = texture2D(tDiffuse, vUv);
-        bool bad = !(c.r == c.r) || !(c.g == c.g) || !(c.b == c.b) || max(max(c.r, c.g), c.b) > 6.0e4;
-        if (bad) c = vec4(1.0, 0.9, 0.8, 1.0);
-        gl_FragColor = vec4(clamp(c.rgb, 0.0, 40.0), 1.0); }`,
-  }));
-  bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.42, 0.32, 1.0);
-  composer.addPass(bloom);
-  composer.addPass(new OutputPass());
+  for (const out of [false, true]) { const p = new ShaderPass(tiltShader(out)); tilt.push(p); composer.addPass(p); }
+  sizeTilt();
 }
 
+// A real tilt-shift photo of a model is taken from above. Looking down, the blur sells the miniature;
+// looking level at a tall tower it would only smear the tower top, so it fades out below ~12° of pitch.
+const _look = new THREE.Vector3();
+function updateTilt() {
+  if (!tilt.length) return;
+  camera.getWorldDirection(_look);
+  const pitch = Math.asin(clamp(-_look.y, -1, 1)), t = clamp((pitch - 0.2) / 0.4, 0, 1), amt = t * t * (3 - 2 * t);
+  for (const p of tilt) p.uniforms.uAmt.value = amt;
+}
 export const exposure = { base: 0.95, dip: 0, boost: 0 };
+// low quality (phones): the sun's shadow map is redrawn every other frame. The sun doesn't move, only
+// rubble does, and its shadow trailing one frame is invisible, while the pass costs a full scene draw.
+const SHADOW_HALF = QUALITY.level === 'low';
+renderer.shadowMap.autoUpdate = !SHADOW_HALF;
+let shadowTick = 0;
 export function render() {
   renderer.toneMappingExposure = exposure.base * (1 - exposure.dip) * (1 + exposure.boost);
+  updateTilt();
+  if (SHADOW_HALF) renderer.shadowMap.needsUpdate = (shadowTick++ & 1) === 0;
   if (composer) composer.render(); else renderer.render(scene, camera);
 }
 
@@ -202,6 +226,7 @@ export function onResize() {
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
   if (composer) composer.setSize(innerWidth, innerHeight);
+  sizeTilt();
 }
 addEventListener('resize', onResize);
 

@@ -194,10 +194,6 @@ export function paintZone(doc, extraLots = []) {
   layout.roads.length = 0; layout.curbs.length = 0;
   // base asphalt
   g.fillStyle = '#5a5e62'; g.fillRect(-half, -half, half * 2, half * 2);
-  for (let i = 0; i < 26000; i++) {
-    g.fillStyle = rng() < 0.5 ? 'rgba(30,32,35,0.22)' : 'rgba(120,122,125,0.16)';
-    g.fillRect(-half + rng() * half * 2, -half + rng() * half * 2, 0.4 + rng(), 0.4 + rng());
-  }
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
     const d = dist[j * N + i], x = -half + i * C, z = -half + j * C;
     const k = G[j * N + i];
@@ -206,7 +202,7 @@ export function paintZone(doc, extraLots = []) {
         g.fillStyle = '#44474b'; g.fillRect(x, z, C + 0.05, C + 0.05);
         const hr = g_(i - 1, j) === R && g_(i + 1, j) === R, vr = g_(i, j - 1) === R && g_(i, j + 1) === R;
         layout.roads.push([x + C / 2, z + C / 2, hr && !vr ? 0 : vr && !hr ? 1 : 2]);
-      } else if (k === W) { g.fillStyle = '#56707a'; g.fillRect(x, z, C + 0.05, C + 0.05); }
+      } else if (k === W) { g.fillStyle = '#5a7d96'; g.fillRect(x, z, C + 0.05, C + 0.05); }
       else if (k === IY) { // concrete yard slabs
         g.fillStyle = ((i + j) & 1) ? '#8e8c86' : '#918f89'; g.fillRect(x, z, C + 0.05, C + 0.05);
         g.fillStyle = 'rgba(60,58,54,0.35)'; g.fillRect(x, z, C, 0.12); g.fillRect(x, z, 0.12, C);

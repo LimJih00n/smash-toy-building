@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ko">
+<html lang="ko" class="toy">
 <head>
 <meta charset="utf-8">
 <meta name="rank-api" content="/api">
@@ -457,6 +457,7 @@ body.clean .hud,body.clean #cross,body.clean #result{display:none!important}
 } }
 </script>
 <meta name="google-adsense-account" content="ca-pub-8781214721692119">
+<link rel="stylesheet" href="./src/toy.css">
 </head>
 <body>
 <div id="stage"></div>
@@ -464,7 +465,6 @@ body.clean .hud,body.clean #cross,body.clean #result{display:none!important}
 <div id="heat"></div>
 <div id="cross"></div>
 
-<div id="brand" class="hud"><div class="logo">회사 <b>때려</b>부수기</div></div>
 <div id="timer" class="hud"><span class="lbl">플레이 시간</span><b id="tm">00:00.0</b><span class="tag" id="tmTag"></span><span class="vs" id="tmVs"></span></div>
 <div id="meter" class="hud">
   <div class="row"><span class="lbl" id="pctLbl">파괴율</span><span class="pct" id="pct">0%</span></div>
@@ -480,7 +480,6 @@ body.clean .hud,body.clean #cross,body.clean #result{display:none!important}
   <div class="sub"><span id="rn">다음 · 사원</span><span id="best">최고 0원</span></div>
 </div>
 <div id="ledger" class="hud"></div>
-<div id="joy" class="hud"><b>이동</b><i></i></div>
 <div id="toast" class="hud"></div>
 <div id="banner" class="hud"><h2 id="bannerT"></h2><p id="bannerS"></p></div>
 <div id="hint" class="hud"></div>
@@ -500,48 +499,13 @@ body.clean .hud,body.clean #cross,body.clean #result{display:none!important}
     <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="21" cy="21" r="7" fill="currentColor" fill-opacity=".25"/><path d="M4 4l11 11M9 3l8 8M3 9l8 8"/></svg>운석</button>
   <button class="tool" data-tool="nuke"><span class="k">7</span>
     <svg viewBox="0 0 32 32" fill="currentColor"><circle cx="16" cy="16" r="2.6"/><g><path d="M16 4.5a11.5 11.5 0 0 1 10 5.8l-6.6 3.8a3.9 3.9 0 0 0-3.4-2z"/></g><path d="M16 4.5a11.5 11.5 0 0 1 10 5.8l-6.6 3.8a3.9 3.9 0 0 0-3.4-2z" transform="rotate(120 16 16)"/><path d="M16 4.5a11.5 11.5 0 0 1 10 5.8l-6.6 3.8a3.9 3.9 0 0 0-3.4-2z" transform="rotate(240 16 16)"/></svg>핵폭탄</button>
+  <button class="tool" data-tool="sword"><span class="k">8</span>
+    <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M27 5l-1 5-12 12-4-4L22 6z" fill="currentColor" fill-opacity=".25"/><path d="M8 16l8 8M12 20l-6 6M5 25l2 2"/></svg>칼</button>
 </div>
 
-<div id="side" class="hud">
-  <button class="sbtn" id="bMaps" title="맵 선택 화면 (Esc)">🏢<span> 맵</span></button>
-  <button class="sbtn" id="bRank" title="랭킹">🏆<span> 랭킹</span></button>
-  <button class="sbtn" id="bEmb" title="엠블럼 도감">🎖<span> 엠블럼</span></button>
-  <button class="sbtn" id="bView" title="시점 전환 (V)">🎥<span> 시점</span></button>
-  <button class="sbtn" id="bReset" title="월드 복원 (R)">⟲<span> 복원</span></button>
-  <button class="sbtn" id="bSound" title="소리 (M)">🔊</button>
-</div>
 
 <div id="veil">
-  <div class="card land">
-    <div class="adbox" id="adbox"><span class="adtag">광고</span><ins class="adsbygoogle" style="display:block;width:100%;height:90px" data-ad-client="ca-pub-8781214721692119" data-ad-slot="3732973160" data-ad-format="horizontal" data-full-width-responsive="false"></ins></div>
-    <script>
-    // one small static banner, at the very top of the menu card so every visitor sees it on the first screen (never during play) and only on the real site, not in tests or video capture
-    (function () {
-      var q = location.search;
-      if (location.hostname !== 'companysmash.com' || /[?&](test|clean)\b/.test(q)) { document.getElementById('adbox').remove(); return; }
-      var s = document.createElement('script'); s.async = true; s.crossOrigin = 'anonymous';
-      s.src = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8781214721692119';
-      document.head.appendChild(s); (window.adsbygoogle = window.adsbygoogle || []).push({});
-    })();
-    </script>
-    <div class="eyebrow">COMPANY SMASH · 무료 · 설치 없음</div>
-    <h1>회사를 <b>때려</b><br>부숴 봅시다</h1>
-    <p class="tagline">진짜 그 건물 그대로. 실제 사옥을 사진과 지도로 재현해서, 유리가 깨지고 기둥이 꺾이고 <b>건물 안까지</b> 무너져요.</p>
-    <div class="quick">
-      <button data-sheet="howto">🎮<span>조작법</span></button>
-      <button data-sheet="rank">🏆<span>파괴 랭킹</span></button>
-      <button data-sheet="guest">📝<span>방명록</span></button>
-      <button data-sheet="share">📤<span>공유</span></button>
-    </div>
-    <div class="top3" id="top3"></div>
-    <input class="msearch" id="msearch" type="search" placeholder="🔍 회사 이름으로 맵 찾기 (예: 쿠팡, 삼성, 하이닉스)" autocomplete="off">
-    <div class="maps" id="maps"></div>
-    <button id="startBtn" disabled>불러오는 중…</button>
-    <div class="ctrl1"><span class="pc-only">클릭 공격 · 끌기 회전 · WASD 이동 · 1~7 무기</span><span class="mo-only">탭 공격 · 끌기 회전 · 조이스틱 이동 · 아래 버튼 무기</span></div>
-    <div class="support" id="support"></div>
-    <div class="fine seo"><b>회사부수기</b>(회사 때려부수기)는 실제 회사 건물을 3D로 재현해 부수는 무료 웹 게임이에요. 삼성전자 부수기(수원 디지털시티, 강남역 서초사옥), SK하이닉스 부수기(이천캠퍼스 M16), SK 부수기(종로 서린빌딩), LG 부수기(여의도 트윈타워), 현대자동차 부수기(양재 사옥), 롯데월드타워 부수기(잠실 555m), 아모레퍼시픽 부수기(용산 큐브 사옥), 포스코 부수기(테헤란로 포스코센터), 하이브 부수기(용산 한강대로 사옥), 한화 부수기(청계천 장교동 한화빌딩), 카카오 부수기(판교아지트), 쿠팡 부수기(구의역 이스트폴 본사, 동탄·고양·칠곡 물류센터), 호텔신라 부수기(서울신라호텔), 신신호텔 부수기(제주 서귀포 천지연점), 신라면세점 물류센터, 메리츠화재 봉래동사옥까지. 설치 없이 PC와 모바일에서 바로 즐겨요.</div>
-    <div class="fine">해당 기업과 제휴·후원 관계가 없는 비공식 게임입니다. 기업명은 모티브 안내용으로만 쓰며 로고·상표 디자인은 사용하지 않습니다. 외관은 공개 사진을 참고한 독자 모델링이며, 건물 배치·높이는 국토교통부 GIS건물통합정보(브이월드)를 이용했습니다. <a href="/privacy.html" style="color:inherit;text-decoration:underline">개인정보처리방침</a> · 문의·삭제 요청 companysmash.help@gmail.com</div>
-  </div>
+  <button id="startBtn" disabled>불러오는 중…</button>
 </div>
 
 <div id="sheet">
@@ -561,37 +525,6 @@ body.clean .hud,body.clean #cross,body.clean #result{display:none!important}
   </div>
 </div>
 <div id="embPop" class="hud"></div>
-<div id="result">
-  <div class="card">
-    <div class="eyebrow" id="rsEyebrow">완파 기록</div>
-    <h1 id="rsTitle" style="font-size:30px">완파!</h1>
-    <div class="big" id="rsTime">00:00.0</div>
-    <div class="stats" id="rsStats"></div>
-    <div class="note" id="rsNote"></div>
-    <video id="rsVideo" controls playsinline muted loop></video>
-    <div class="row"><button class="ghost" id="rsClip">🎬 붕괴 영상 저장</button><button class="ghost" id="rsShare">📤 결과 공유</button></div>
-    <div class="row" id="rsSubmitRow"><input id="rsName" maxlength="12" placeholder="닉네임 (실명·욕설 금지)"><button id="rsSubmit" style="flex:0 0 120px">랭킹 등록</button></div>
-    <div id="rsEmb"></div>
-    <div id="boardTabs"></div>
-    <div id="board"></div>
-    <div class="row"><button class="ghost" id="rsAgain">⟲ 다시 도전</button><button class="ghost" id="rsClose">계속 부수기</button></div>
-    <div class="support" id="rsSupport"></div>
-    <div class="adbox rsad" id="rsAdbox"><span class="adtag">광고</span><ins class="adsbygoogle" style="display:block;width:100%;height:90px" data-ad-client="ca-pub-8781214721692119" data-ad-slot="7034244725" data-ad-format="horizontal" data-full-width-responsive="false"></ins></div>
-  </div>
-</div>
-<script>
-// result-card banner: filled the first time the card opens (a hidden slot has no width), real site only
-(function () {
-  var box = document.getElementById('rsAdbox'), res = document.getElementById('result');
-  if (location.hostname !== 'companysmash.com' || /[?&](test|clean)\b/.test(location.search)) { box.remove(); return; }
-  var mo = new MutationObserver(function () {
-    if (!res.classList.contains('show')) return;
-    mo.disconnect(); setTimeout(function () { (window.adsbygoogle = window.adsbygoogle || []).push({}); }, 300);
-  });
-  mo.observe(res, { attributes: true, attributeFilter: ['class'] });
-})();
-</script>
-
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

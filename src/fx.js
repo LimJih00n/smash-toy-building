@@ -13,25 +13,25 @@ const atlas = (() => {
   const g = c.getContext('2d');
   const img = g.createImageData(S, S);
   const h = (x, y, s) => { const v = Math.sin(x * 127.1 + y * 311.7 + s * 74.7) * 43758.5453; return v - Math.floor(v); };
-  const vn = (x, y, s) => { const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi, u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
-    return (h(xi, yi, s) * (1 - u) + h(xi + 1, yi, s) * u) * (1 - v) + (h(xi, yi + 1, s) * (1 - u) + h(xi + 1, yi + 1, s) * u) * v; };
   for (let f = 0; f < F * F; f++) {
     const ox = (f % F) * cs, oy = Math.floor(f / F) * cs;
     for (let y = 0; y < cs; y++) for (let x = 0; x < cs; x++) {
       const u = (x + 0.5) / cs * 2 - 1, v = (y + 0.5) / cs * 2 - 1;
       const r = Math.hypot(u, v);
-      let a;
-      if (f === 15) a = Math.pow(clamp(1 - r, 0, 1), 1.6); // pure soft dot
-      else {
-        let n = 0, amp = 0.5, fr = 2.2;
-        for (let o = 0; o < 5; o++) { n += amp * vn(u * fr + f * 7.1, v * fr - f * 3.3, f); amp *= 0.5; fr *= 2; }
-        a = clamp((1 - r * (0.85 + 0.5 * n)) * 1.9, 0, 1);
-        a = a * a * (0.55 + 0.6 * n);
-        const edge = clamp((0.98 - r) / 0.3, 0, 1); a *= edge * edge * (3 - 2 * edge); // never touch the quad border
-      }
       const o = 4 * ((oy + y) * S + ox + x);
-      const lum = f === 15 ? 255 : 170 + 85 * clamp(1.2 - r, 0, 1);
-      img.data[o] = lum; img.data[o + 1] = lum; img.data[o + 2] = lum; img.data[o + 3] = clamp(a, 0, 1) * 255;
+      if (f === 15) { // pure soft dot
+        img.data[o] = img.data[o + 1] = img.data[o + 2] = 255; img.data[o + 3] = Math.pow(clamp(1 - r, 0, 1), 1.6) * 255;
+        continue;
+      }
+      // cartoon puff: 3-4 overlapping discs with a crisp edge, lit from the top-left
+      let d = 9;
+      for (let q = 0; q < 4; q++) {
+        const pa = f * 2.4 + q * 1.9, pr = 0.36 + 0.14 * h(q, f, 3);
+        const px = q === 0 ? 0 : Math.cos(pa) * 0.32, py = q === 0 ? 0.05 : Math.sin(pa) * 0.26;
+        d = Math.min(d, Math.hypot(u - px, v - py) - (q === 0 ? 0.46 : pr));
+      }
+      const lum = 205 + 50 * clamp(0.5 - 0.6 * (u * 0.6 + v * 0.8), 0, 1);
+      img.data[o] = img.data[o + 1] = img.data[o + 2] = lum; img.data[o + 3] = clamp(0.5 - d * cs * 0.5, 0, 1) * 255;
     }
   }
   g.putImageData(img, 0, 0);
@@ -265,6 +265,8 @@ export const chips = new Debris(chipGeo, chipMat, CHIP_CAP, true);
 terrain.listeners.push((x0, x1, z0, z1) => { shards.wake(x0, x1, z0, z1); chips.wake(x0, x1, z0, z1); });
 
 // ---------------------------------------------------------------- shockwave meshes
+/** objects carrying the base materials that effects clone per use (see W.warmup) */
+export function warmObjects() { return [new THREE.Mesh(ringGeo, ringMat), new THREE.Mesh(shellGeo, shellMat)]; }
 const ringMat = new THREE.ShaderMaterial({
   uniforms: { uA: { value: 1 }, uC: { value: new THREE.Color(1, 0.9, 0.75) } },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
@@ -348,7 +350,9 @@ function updateTimers(dt) {
   }
 }
 
-const SMOKE_DARK = [0.16, 0.15, 0.14, 0.9], SMOKE_GREY = [0.42, 0.41, 0.4, 0.75], DUST = [0.62, 0.58, 0.52, 0.6];
+const SMOKE_DARK = [0.36, 0.37, 0.44, 0.9];
+const SMOKE_GREY = [0.80, 0.82, 0.88, 0.75];
+const DUST = [0.93, 0.87, 0.76, 0.6]; // cream, like the cut faces
 export function fire(x, y, z, vx, vy, vz, life, s0, s1, heat = 1) { return add.spawn(T_FIRE, x, y, z, vx, vy, vz, life, s0, s1, { heat, drag: 1.6, grav: -3, c: [1, 1, 1, 1] }); }
 export function smoke(x, y, z, vx, vy, vz, life, s0, s1, dark = 0.5, a = 0.8) {
   const c = [lerp(SMOKE_GREY[0], SMOKE_DARK[0], dark), lerp(SMOKE_GREY[1], SMOKE_DARK[1], dark), lerp(SMOKE_GREY[2], SMOKE_DARK[2], dark), a];

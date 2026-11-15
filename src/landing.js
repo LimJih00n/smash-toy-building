@@ -17,6 +17,8 @@ export function initLanding(c) {
 }
 
 function close() { document.getElementById('sheet').classList.remove('show'); }
+/** open one of the sheets: 'howto' | 'rank' | 'guest' | 'share' */
+export function openSheet(kind) { open(kind); }
 function open(kind) {
   const body = document.getElementById('sheetBody'); body.textContent = '';
   const title = { howto: '🎮 조작법', rank: '🏆 회사 파괴 랭킹', guest: '📝 방명록', share: '📤 친구에게 공유' }[kind];
@@ -35,8 +37,9 @@ const WEAPONS = [
   ['6', '운석', '반경 40 m를 날려 버려요.'],
   ['7', '핵폭탄', '반경 230 m가 통째로. 대신 랭킹에는 안 올라가요.'],
 ];
-const PC = [['🖱 왼쪽 클릭', '공격 (고른 무기)'], ['🖱 끌기', '시점 돌리기'], ['🖱 오른쪽 끌기', '화면 이동'], ['🖱 휠', '확대·축소'], ['W A S D / 방향키', '걸어서 이동'], ['Q / E', '아래로 / 위로'], ['1 ~ 7', '무기 바꾸기'], ['V · R · M · Esc', '시점 · 복원 · 소리 · 맵 선택']];
-const MO = [['👆 탭', '공격 (고른 무기)'], ['☝️ 한 손가락 끌기', '시점 돌리기'], ['✌️ 두 손가락', '이동 · 확대'], ['🕹 왼쪽 아래 조이스틱', '걸어서 이동'], ['⬇️ 아래 버튼 줄', '무기 바꾸기'], ['📱 가로 화면', '더 넓게 보여요']];
+WEAPONS.push(['8', '칼', '화면을 그으면 그 선대로 베어요. 건물을 끝까지 가로지르면 윗부분이 떨어져요.']);
+const PC = [['🖱 왼쪽 클릭', '공격 (고른 무기)'], ['🖱 끌기', '시점 돌리기'], ['🖱 오른쪽 끌기', '화면 이동'], ['🖱 휠', '확대·축소'], ['W A S D / 방향키', '걸어서 이동'], ['Q / E', '아래로 / 위로'], ['1 ~ 8', '무기 바꾸기'], ['V · R · M · Esc', '시점 · 복원 · 소리 · 맵 선택']];
+const MO = [['👆 탭', '공격 (고른 무기)'], ['☝️ 한 손가락 끌기', '시점 돌리기'], ['✌️ 두 손가락', '이동 · 확대'], ['⬇️ 아래 버튼 줄', '무기 바꾸기 (옆으로 밀면 더 있어요)'], ['⏸ 왼쪽 위 버튼', '일시정지 · 메뉴']];
 function howto(body) {
   const isMo = matchMedia('(pointer: coarse)').matches;
   const tabs = el('div', 'tabs'); const pane = el('div');
@@ -50,7 +53,7 @@ function howto(body) {
   for (const [i, t] of ['💻 PC', '📱 휴대폰'].entries()) { const b = el('button', null, t); b.addEventListener('click', () => show(i === 1)); tabs.appendChild(b); }
   body.append(tabs, pane);
   show(isMo);
-  body.appendChild(el('h3', null, '무기 7종'));
+  body.appendChild(el('h3', null, `무기 ${WEAPONS.length}종`));
   const w = el('div', 'weap');
   for (const [k, n, d] of WEAPONS) { const r = el('div', 'wrow'); r.append(el('i', null, k), el('b', null, n), el('span', null, d)); w.appendChild(r); }
   body.appendChild(w);

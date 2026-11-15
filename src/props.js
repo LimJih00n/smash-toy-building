@@ -33,7 +33,7 @@ function blobG(r, x, y, z, hex, seed, squash = 1) {
   for (let i = 0; i < p.count; i++) {
     const vx = p.getX(i), vy = p.getY(i), vz = p.getZ(i);
     const n = fbm(vx * 0.9 + seed, vz * 0.9 + vy * 0.7 - seed, 3);
-    const k = 0.78 + 0.5 * n;
+    const k = 0.94 + 0.12 * n; // round low-poly balls
     p.setXYZ(i, vx * k + x, vy * k * squash + y, vz * k + z);
     // darker underside, lighter sunny top
     const t = clamp(0.55 + vy / r * 0.45, 0, 1);
@@ -103,6 +103,11 @@ const matTree = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 
 const matMetal = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.55 });
 const matCar = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.28, metalness: 0.6 });
 const matWood = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0.1 });
+// painted plastic: faceted bright trees, candy-coloured cars, no chrome
+matTree.flatShading = true; matTree.color.setRGB(1.25, 1.45, 1.0);
+matMetal.metalness = 0.15; matMetal.roughness = 0.5;
+matCar.metalness = 0.05; matCar.roughness = 0.35;
+const CAR_COLORS = [0xff6b6b, 0xffd166, 0x4dabf7, 0x63e6be, 0xffffff, 0xf783ac, 0x9775fa, 0xffa94d, 0x74c0fc, 0xffffff];
 
 class PropSet {
   constructor(name, geo, mat, half, cap, opt = {}) {
@@ -226,7 +231,7 @@ export function build() {
   // the iron fence along the street (gaps for the pedestrian gate and the car gate)
   for (let x = -148.5; x <= 148.5; x += 3) { if (nearGate(x, 6)) continue; fence.add(x, R5.fenceZ, 0, 1); }
   // cars: stopped traffic on the main road, parked behind the podium, side streets
-  const colors = [0xf2f2f2, 0x1d1f22, 0x8a9198, 0xc9ccd0, 0x2a3f66, 0x7a1d1d, 0xe8e2d4, 0x3b4a3c, 0xb8b9bb, 0x101114];
+  const colors = CAR_COLORS;
   const pc = () => colors[Math.floor(rng() * colors.length)];
   for (let x = -300; x <= 300; x += 9 + rng() * 14) { if (rng() < 0.35) continue; cars.add(x, [76, 80, 84][Math.floor(rng() * 3)], 0, 1, pc()); }
   for (let x = -300; x <= 300; x += 9 + rng() * 14) { if (rng() < 0.4) continue; cars.add(x, [88, 92, 96][Math.floor(rng() * 3)], Math.PI, 1, pc()); }
@@ -243,7 +248,7 @@ export function build() {
 // edges, cars parked on the open asphalt
 function zoneProps(rng) {
   const pick = (arr, n) => { const out = []; for (let i = 0; i < n && arr.length; i++) out.push(arr[Math.floor(rng() * arr.length)]); return out; };
-  const colors = [0xf2f2f2, 0x1d1f22, 0x8a9198, 0xc9ccd0, 0x2a3f66, 0x7a1d1d, 0xe8e2d4, 0x3b4a3c, 0xb8b9bb, 0x101114];
+  const colors = CAR_COLORS;
   for (const [x, z] of pick(layout.lawns, 420)) (rng() < 0.6 ? tree1 : tree2).add(x + rand(-1.8, 1.8), z + rand(-1.8, 1.8), rng() * 6.3, 0.85 + rng() * 0.4);
   for (const [x, z] of pick(layout.walks, 200)) tree2.add(x + rand(-1, 1), z + rand(-1, 1), rng() * 6.3, 0.85 + rng() * 0.3);
   for (const [x, z] of pick(layout.lawns, 160)) hedge.add(x, z, rng() < 0.5 ? 0 : Math.PI / 2, 0.55 + rng() * 0.2);
@@ -260,80 +265,6 @@ function zoneProps(rng) {
   layout.curbs.forEach(([x, z], i) => { if (i % 3 === 0) tree1.add(x + rand(-0.5, 0.5), z + rand(-0.5, 0.5), rng() * 6.3, 0.95 + rng() * 0.25); else if (i % 7 === 1) lamps.add(x, z, rng() * 6.3, 1); });
   if (cars.mesh.instanceColor) cars.mesh.instanceColor.needsUpdate = true;
   for (const [x, z] of pick(layout.walks, 40)) benches.add(x, z, rng() * 6.3, 1);
-}
-
-// ---------- distant skyline ring (decor, not playable)
-export function buildSkyline() {
-  const rng = mulberry(5150);
-  const tex = (() => {
-    const c = document.createElement('canvas'); c.width = 64; c.height = 128;
-    const g = c.getContext('2d');
-    g.fillStyle = '#cfd3d6'; g.fillRect(0, 0, 64, 128);
-    for (let y = 4; y < 128; y += 8) for (let x = 3; x < 64; x += 8) { g.fillStyle = `rgba(${40 + rng() * 30},${55 + rng() * 30},${70 + rng() * 30},0.9)`; g.fillRect(x, y, 5, 5); }
-    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
-  })();
-  const geo = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
-  const uv = geo.attributes.uv; // repeat texture by size via shader-free trick: scale uvs later per instance isn't possible; use average
-  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 3, uv.getY(i) * 6);
-  const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7, metalness: 0.2 });
-  // backdrop per zone (satellite): 'city' (default), 'lowrise' (suburban sheds/houses), 'hills' (rural valley)
-  const bd = (MAP.doc && MAP.doc.backdrop) || 'city';
-  const N = bd === 'hills' ? 70 : bd === 'campus' ? 220 : 420;
-  const m = new THREE.InstancedMesh(geo, mat, N);
-  const M = new THREE.Matrix4(), col = new THREE.Color();
-  let n = 0;
-  for (let i = 0; i < N * 3 && n < N; i++) {
-    const a = rng() * Math.PI * 2, r = 380 + Math.pow(rng(), 0.7) * 1300;
-    const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (Math.abs(x) < 345 && Math.abs(z) < 345) continue;
-    let w = 20 + rng() * 40, d = 20 + rng() * 40, h = (r < 700 ? 15 : 25) + Math.pow(rng(), 2.2) * (r < 700 ? 70 : 130);
-    if (bd !== 'city' && bd !== 'campus') { h = 7 + Math.pow(rng(), 2) * (bd === 'hills' ? 14 : 30); w *= 1.5; d *= 1.3; }
-    if (bd === 'hills' && r > 650) continue;
-    // 'campus' (SK hynix Icheon, skyview + press aerial): the rest of the fab campus close by, white apartment slabs east/north-east, fields and hills beyond
-    if (bd === 'campus') {
-      if (r > 1150) continue;
-      if (x > 120 && r < 1100) { w = 14 + rng() * 8; d = 45 + rng() * 25; h = 55 + rng() * 40; }
-      else if (r < 760) { w = 60 + rng() * 90; d = 50 + rng() * 80; h = 15 + rng() * 45; }
-      else continue;
-    }
-    M.compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rng() * 0.4), new THREE.Vector3(w, h, d));
-    m.setMatrixAt(n, M);
-    col.setHSL(0.58 + rng() * 0.05, 0.05 + rng() * 0.08, 0.62 + rng() * 0.22);
-    m.setColorAt(n, col);
-    n++;
-  }
-  m.count = n;
-  m.receiveShadow = false; m.castShadow = false;
-  scene.add(m);
-  // distant tree masses
-  const tg = new THREE.IcosahedronGeometry(1, 1);
-  const TN = bd === 'hills' ? 1600 : 500;
-  const tm = new THREE.InstancedMesh(tg, new THREE.MeshStandardMaterial({ color: 0x4d6a3e, roughness: 1, flatShading: true }), TN);
-  let k = 0;
-  if (bd === 'hills' || bd === 'campus') {
-    // forested ridges around the valley: big flattened mounds, tree masses on their flanks
-    const hm = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 2), new THREE.MeshStandardMaterial({ color: 0x4f6b3c, roughness: 1, flatShading: true }), 40);
-    let hn = 0;
-    for (let i = 0; i < 400 && hn < 40; i++) {
-      const a = rng() * Math.PI * 2, r = (bd === 'campus' ? 1000 : 560) + rng() * 900;
-      const x = Math.cos(a) * r, z = Math.sin(a) * r;
-      if (Math.abs(x) < 420 && Math.abs(z) < 420) continue;
-      const rx = 180 + rng() * 260, rz = 140 + rng() * 220, ry = bd === 'campus' ? 25 + rng() * 55 : 45 + rng() * (r > 1000 ? 150 : 90);
-      M.compose(new THREE.Vector3(x, -ry * 0.25, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rng() * 3), new THREE.Vector3(rx, ry, rz));
-      hm.setMatrixAt(hn, M); col.setHSL(0.27 + rng() * 0.04, 0.28 + rng() * 0.1, 0.26 + rng() * 0.08); hm.setColorAt(hn, col); hn++;
-    }
-    hm.count = hn; scene.add(hm);
-  }
-  for (let i = 0; i < TN * 4 && k < TN; i++) {
-    const a = rng() * Math.PI * 2, r = 350 + rng() * 600;
-    const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (Math.abs(x) < 335 && Math.abs(z) < 335) continue;
-    const s = 4 + rng() * 6;
-    M.compose(new THREE.Vector3(x, s * 0.6, z), new THREE.Quaternion(), new THREE.Vector3(s, s * 0.9, s));
-    tm.setMatrixAt(k++, M);
-  }
-  tm.count = k;
-  scene.add(tm);
 }
 
 // ---------- interactions

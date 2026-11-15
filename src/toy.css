@@ -1,0 +1,150 @@
+/* ==== the game's UI, built by src/toyui.js ================================================================
+   Portrait one-hand play first: one top bar, the weapon row under the thumb, the rest in a pause menu.
+   Selectors carry html.toy so they win over the older base rules in index.html. */
+html.toy{--top:calc(8px + env(safe-area-inset-top));--bot:calc(8px + env(safe-area-inset-bottom));--r:16px}
+
+/* HUD parts the compact top bar leaves out */
+html.toy #pctLbl,html.toy #combo,
+html.toy #timer .lbl,html.toy #timer .vs,html.toy #score .lan,html.toy #score .mul,html.toy #score .lbl,html.toy #score .sub,
+html.toy .tool .k{display:none!important}
+@media (hover:hover) and (pointer:fine){html.toy .tool .k{display:block!important}}
+
+/* ---- top bar: menu · target progress + time · title + damage */
+html.toy #toyTop{position:fixed;z-index:6;left:8px;right:8px;top:var(--top);display:flex;gap:8px;align-items:stretch;pointer-events:none}
+html.toy #toyTop>*{pointer-events:auto}
+html.toy #toyMenuBtn{flex:0 0 52px;min-height:52px;border:0;border-radius:var(--r);background:#fff;color:var(--g800);box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+html.toy #toyMenuBtn svg{width:22px;height:22px}
+html.toy #toyMenuBtn:active{transform:scale(.96)}
+html.toy #meter{position:static;flex:1 1 auto;min-width:0;padding:9px 12px 8px;border-radius:var(--r);background:#fff;box-shadow:var(--shadow);border:0;backdrop-filter:none}
+html.toy #meter .row{gap:8px}
+html.toy #meter .pct{font-size:22px;font-weight:800;letter-spacing:-.5px;color:var(--g900)}
+html.toy #timer{position:static;padding:0;background:none;border:0;box-shadow:none;backdrop-filter:none;gap:4px}
+html.toy #timer b{font:700 14px var(--font);font-variant-numeric:tabular-nums;color:var(--g600)}
+html.toy #timer.done b{color:var(--blue)}
+html.toy #timer .tag{color:var(--g500)}
+html.toy #meter .bar{height:6px;margin-top:6px;background:var(--g200)}
+html.toy #meter .sub{margin-top:5px;font-size:11px;color:var(--g500);justify-content:flex-start}
+html.toy #score{position:static;flex:0 0 auto;width:auto;min-width:88px;max-width:36vw;padding:9px 12px 8px;border-radius:var(--r);background:#fff;box-shadow:var(--shadow);border:0;backdrop-filter:none;display:flex;flex-direction:column;justify-content:center}
+html.toy #score .row1{display:block}
+html.toy #score .jk{font-size:12px;font-weight:800;color:var(--blue)}
+html.toy #score .sv{font-size:16px;color:var(--g900);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+html.toy #score .gb{height:3px;margin-top:6px;background:var(--g200)}
+html.toy #score .gb i{background:var(--blue)}
+/* wide screens: the bar keeps phone proportions instead of stretching across */
+@media (min-width:720px){html.toy #meter{flex:0 1 420px}html.toy #score{margin-left:auto;min-width:140px}}
+
+/* ---- messages: score lines under the title, toasts under the bar, one-line weapon hint over the row */
+html.toy #ledger{right:8px;top:calc(var(--top) + 64px);width:min(180px,46vw)}
+html.toy #ledger div{font-size:12px;color:var(--g800);background:rgba(255,255,255,.92);border-left-color:var(--blue);box-shadow:var(--shadow)}
+html.toy #ledger div b{color:var(--blue)}
+html.toy #toast{top:calc(var(--top) + 66px);font:700 14px var(--font);padding:9px 16px;border-radius:999px;background:rgba(25,31,40,.86);color:#fff;max-width:calc(100vw - 32px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+html.toy #embPop{top:calc(var(--top) + 112px)}
+html.toy #hint{left:50%;right:auto;transform:translateX(-50%);bottom:calc(var(--bot) + 92px);white-space:nowrap;font:700 13px var(--font);line-height:1.2;padding:9px 16px;border-radius:999px;background:rgba(25,31,40,.86);color:#fff;box-shadow:none;transition:opacity .4s}
+
+/* ---- weapon row: thumb-sized buttons; slides sideways when the screen is too narrow for all of them */
+html.toy #dock{left:8px;right:8px;transform:none;bottom:var(--bot);max-width:none;gap:6px;padding:6px;border-radius:22px;background:rgba(255,255,255,.94);box-shadow:var(--shadow);border:0;
+  overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity;scrollbar-width:none;touch-action:pan-x}
+html.toy #dock::-webkit-scrollbar{display:none}
+html.toy #dock .tool:first-child{margin-left:auto}html.toy #dock .tool:last-child{margin-right:auto}
+html.toy .tool{flex:0 0 62px;width:62px;height:66px;border-radius:16px;gap:4px;font:700 11px var(--font);letter-spacing:-.3px;background:var(--g100);color:var(--g800);scroll-snap-align:center}
+html.toy .tool svg{width:30px;height:30px}
+html.toy .tool.on{background:var(--blue);color:#fff;box-shadow:0 6px 16px rgba(49,130,246,.35)}
+@media (min-width:640px){html.toy #dock{left:50%;right:auto;transform:translateX(-50%);max-width:calc(100vw - 16px)}}
+
+/* ---- pause menu: a bottom sheet */
+#toyMenu,#toyResult{position:fixed;inset:0;z-index:25;display:none;align-items:flex-end;justify-content:center;background:rgba(0,12,30,.36)}
+#toyMenu.show,#toyResult.show{display:flex}
+#toyMenu .sheet,#toyResult .sheet{width:min(480px,100vw);box-sizing:border-box;max-height:calc(100vh - 24px);overflow-y:auto;background:#fff;color:var(--g900);border-radius:24px 24px 0 0;padding:20px 16px var(--bot);box-shadow:0 -10px 40px rgba(0,12,30,.18);font-family:var(--font);animation:toyUp .22s ease-out}
+@keyframes toyUp{from{transform:translateY(24px);opacity:.4}to{transform:none;opacity:1}}
+@media (min-width:640px) and (min-height:560px){#toyMenu,#toyResult{align-items:center}#toyMenu .sheet,#toyResult .sheet{border-radius:24px;padding-bottom:20px}}
+#toyMenu .hd small,#toyResult .hd small{display:block;font-size:13px;font-weight:600;color:var(--g500);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#toyMenu .hd h2,#toyResult .hd h2{margin:2px 0 14px;font-size:24px;font-weight:800;letter-spacing:-.5px}
+#toyMenu button,#toyResult button{font-family:var(--font);cursor:pointer;border:0}
+#toyMenu .primary,#toyResult .primary{width:100%;height:56px;border-radius:16px;background:var(--blue);color:#fff;font-size:17px;font-weight:700}
+#toyMenu .primary:active,#toyResult .primary:active{background:var(--blue-dk)}
+#toyMenu .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px}
+#toyMenu .item{height:84px;border-radius:16px;background:var(--g100);color:var(--g800);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;font-size:13px;font-weight:700;padding:0 4px}
+#toyMenu .item svg{width:26px;height:26px}
+#toyMenu .item:active{background:var(--g200)}
+
+/* ---- result */
+#toyResult .timerow{display:flex;align-items:center;gap:8px;margin:-6px 0 14px}
+#toyResult .time{font-size:40px;font-weight:800;letter-spacing:-1px;font-variant-numeric:tabular-nums}
+#toyResult .medal,#toyHome .medal{font-style:normal;font-size:12px;font-weight:800;color:#fff;background:var(--c);border-radius:999px;padding:3px 8px}
+#toyResult .new{font-style:normal;font-size:12px;font-weight:800;color:var(--blue);background:var(--blue-bg);border-radius:999px;padding:3px 8px}
+#toyResult .stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px}
+#toyResult .stats div{background:var(--g100);border-radius:14px;padding:10px 12px;min-width:0}
+#toyResult .stats small{display:block;font-size:12px;font-weight:600;color:var(--g500)}
+#toyResult .stats b{display:block;margin-top:2px;font-size:16px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#toyResult .hl{display:grid;gap:2px;padding:12px 14px;border-radius:14px;background:var(--blue-bg);margin-bottom:12px}
+#toyResult .hl small{font-size:12px;font-weight:700;color:var(--blue)}
+#toyResult .hl b{font-size:20px;font-weight:800}
+#toyResult .hl span{font-size:13px;color:var(--g600)}
+#toyResult video{display:none;width:100%;max-height:200px;object-fit:cover;border-radius:14px;background:var(--g100);margin-bottom:6px}
+#toyResult .ghost{width:100%;height:44px;border-radius:14px;background:none;color:var(--g600);font-size:14px;font-weight:700}
+#toyResult .ghost.small{height:36px;margin-bottom:8px}
+#toyResult .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+#toyResult .row button{height:48px;border-radius:14px;background:var(--g100);color:var(--g800);font-size:15px;font-weight:700}
+
+/* ---- home: stage cards and one start button */
+html.toy #veil{background:var(--g50);align-items:stretch}
+html.toy #veil.hide{opacity:0}
+#toyHome{display:flex;flex-direction:column;width:min(560px,100vw);margin:0 auto;height:100%;box-sizing:border-box;padding:calc(var(--top) + 8px) 16px 0;font-family:var(--font);color:var(--g900)}
+#toyHome header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:16px}
+#toyHome .tt small{display:block;font-size:13px;font-weight:700;color:var(--blue)}
+#toyHome .tt h1{margin:2px 0 0;font-size:30px;font-weight:800;letter-spacing:-1px}
+#toyHome .best{text-align:right}
+#toyHome .best small{display:block;font-size:12px;font-weight:600;color:var(--g500)}
+#toyHome .best b{font-size:16px;font-weight:800}
+#toyHome .bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+#toyHome .bar h2{margin:0;font-size:18px;font-weight:800}
+#toyHome .seg{display:flex;padding:3px;border-radius:12px;background:var(--g200)}
+#toyHome .seg button{border:0;background:none;padding:7px 12px;border-radius:9px;font:700 13px var(--font);color:var(--g600);cursor:pointer}
+#toyHome .seg button.on{background:#fff;color:var(--g900);box-shadow:0 1px 4px rgba(0,27,55,.1)}
+#toyHome .cards{flex:1 1 auto;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;display:grid;grid-template-columns:minmax(0,1fr);gap:8px;align-content:start;padding-bottom:12px;margin:0 -4px;padding-left:4px;padding-right:4px}
+@media (min-width:520px){#toyHome .cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+#toyHome .sc{position:relative;min-width:0;box-sizing:border-box;display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:12px;border-radius:18px;border:2px solid transparent;background:#fff;box-shadow:0 1px 3px rgba(0,27,55,.06);cursor:pointer;font-family:var(--font);color:var(--g900)}
+#toyHome .sc.on{border-color:var(--blue)}
+#toyHome .sc:active{transform:scale(.99)}
+#toyHome .th{flex:0 0 56px;height:56px;border-radius:14px;display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(150deg,hsl(var(--h) 75% 74%),hsl(calc(var(--h) + 40) 70% 62%))}
+#toyHome .th svg{width:30px;height:30px}
+#toyHome .tx{min-width:0;display:flex;flex-direction:column;gap:2px}
+#toyHome .tx b{font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#toyHome .tx small{font-size:12px;color:var(--g500);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#toyHome .meta{display:flex;align-items:center;gap:6px;margin-top:2px;font-size:12px;font-weight:600;color:var(--g600);white-space:nowrap;overflow:hidden}
+#toyHome .meta .dmg{color:var(--blue)}
+#toyHome .cur{position:absolute;right:12px;top:10px;font-style:normal;font-size:11px;font-weight:800;color:var(--blue)}
+#toyHome .foot{padding:10px 0 var(--bot);background:linear-gradient(rgba(249,250,251,0),var(--g50) 14px)}
+#toyHome .links{display:flex;justify-content:center;gap:4px;margin-bottom:8px}
+#toyHome .links button{border:0;background:none;padding:6px 10px;font:700 13px var(--font);color:var(--g600);cursor:pointer}
+html.toy #startBtn{width:100%;height:56px;border:0;border-radius:16px;background:var(--blue);color:#fff;font:700 17px var(--font);box-shadow:none;cursor:pointer}
+html.toy #startBtn:disabled{background:var(--g300,#d1d6db);opacity:1}
+
+/* ---- short screens (a phone held sideways): tighter sheets, the menu on one row, more of the stage list */
+@media (max-height:500px){
+  #toyMenu .sheet,#toyResult .sheet{width:min(720px,100vw);padding-top:14px}
+  #toyMenu .hd small,#toyResult .hd small{font-size:12px}
+  #toyMenu .hd h2,#toyResult .hd h2{font-size:20px;margin:0 0 8px}
+  #toyMenu .primary,#toyResult .primary{height:46px;font-size:16px}
+  #toyMenu .grid{grid-template-columns:repeat(6,1fr)}
+  #toyMenu .item{height:68px;font-size:12px}
+  #toyResult .timerow{margin:-4px 0 8px}
+  #toyResult .time{font-size:28px}
+  #toyResult .stats{margin-bottom:6px}
+  #toyResult .stats div{padding:6px 10px}
+  #toyResult .stats b{font-size:14px}
+  #toyResult .hl{padding:8px 12px;margin-bottom:8px}
+  #toyResult .hl b{font-size:16px}
+  #toyResult video,#toyResult .ghost.small{display:none!important}
+  #toyResult .row{margin-top:6px}
+  #toyResult .row button{height:40px}
+  #toyResult .ghost{height:34px}
+  #toyHome header{margin-bottom:6px}
+  #toyHome .tt small{display:none}
+  #toyHome .tt h1{font-size:22px}
+  #toyHome .bar{margin-bottom:6px}
+  #toyHome .links{margin-bottom:4px}
+  #toyHome .sc{padding:8px}
+  #toyHome .th{flex-basis:44px;height:44px}
+  html.toy #startBtn{height:46px}
+}

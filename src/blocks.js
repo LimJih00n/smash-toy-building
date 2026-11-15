@@ -25,6 +25,9 @@ geo.setAttribute('aSize', aSize);
 geo.setAttribute('aInfo', aInfo);
 geo.setAttribute('aHeatI', aHeat);
 geo.setAttribute('aTint', aTint);
+// the building's pastel paint (rgb) and whether it has one (w)
+const aPaint = new THREE.InstancedBufferAttribute(new Float32Array(CAP * 4), 4).setUsage(THREE.DynamicDrawUsage);
+geo.setAttribute('aPaint', aPaint);
 
 const GLSL_COMMON = /* glsl */`
 float hh(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453123); }
@@ -35,6 +38,7 @@ float vn(vec3 p){ vec3 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
   return mix(mix(mix(a,b,f.x),mix(c,d,f.x),f.y), mix(mix(e,g,f.x),mix(h,k,f.x),f.y), f.z); }
 // anti-aliased periodic line: 1 on the line, fades to its average coverage when too small on screen
 float gl(float x, float period, float halfW){
+  if (halfW < period * 0.25) halfW = min(halfW * 1.6, period * 0.25); // chunkier frames and joints, like a moulded model
   float f = x / period; float w = halfW / period; float fw = max(fwidth(f), 1e-5);
   float d = abs(fract(f + 0.5) - 0.5);
   float l = 1.0 - smoothstep(w - fw * 0.75, w + fw * 0.75, d);
@@ -53,15 +57,19 @@ mat.onBeforeCompile = (sh) => {
   sh.vertexShader = sh.vertexShader
     .replace('#include <common>', `#include <common>
 attribute vec3 aRest; attribute vec3 aSize; attribute vec4 aInfo; attribute float aHeatI; attribute vec4 aTint;
-varying vec3 vRest; varying vec3 vRN; varying vec4 vInfo; varying float vExt; varying float vHeatI; varying vec4 vTint;`)
+varying vec3 vRest; varying vec3 vRN; varying vec4 vInfo; varying float vExt; varying float vHeatI; varying vec4 vTint;
+attribute vec4 aPaint; varying vec3 vLoc; varying vec3 vSz; varying vec4 vPaint;
+`)
     .replace('#include <begin_vertex>', `#include <begin_vertex>
 vRest = aRest + position * aSize; vRN = normal; vInfo = aInfo; vHeatI = aHeatI; vTint = aTint;
+vLoc = position * aSize; vSz = aSize; vPaint = aPaint;
 { int m = int(aInfo.y + 0.5);
   int bit = normal.x > 0.5 ? 0 : (normal.x < -0.5 ? 1 : (normal.y > 0.5 ? 2 : (normal.y < -0.5 ? 3 : (normal.z > 0.5 ? 4 : 5))));
   vExt = float((m >> bit) & 1); }`);
   sh.fragmentShader = sh.fragmentShader
     .replace('#include <common>', `#include <common>
 varying vec3 vRest; varying vec3 vRN; varying vec4 vInfo; varying float vExt; varying float vHeatI; varying vec4 vTint;
+varying vec3 vLoc; varying vec3 vSz; varying vec4 vPaint;
 ${GLSL_COMMON}`)
     .replace('#include <color_fragment>', `#include <color_fragment>
 vec3 P = vRest; vec3 Nr = normalize(vRN);
@@ -71,6 +79,7 @@ int kind = int(vInfo.x + 0.5); int vari = int(vInfo.w + 0.5); float dmg = vInfo.
 vec3 col = vec3(0.7); float rgh = 0.8; float mtl = 0.0; vec3 emi = vec3(0.0); float pert = 0.0; vec3 pertSeed = vec3(0.0);
 float fh = kind == 0 || kind == 1 ? 4.6 : (kind == 5 ? 3.8 : (kind == 2 || kind == 3 || kind == 4 ? 6.0 : 4.0));
 float nz = vn(P * 1.7) * 0.6 + vn(P * 5.3) * 0.4;
+nz = 0.5 + (nz - 0.5) * 0.3; // moulded plastic: almost no grime or mottling
 if (kind >= 12 && kind <= 14) {
   // ---- what is inside a building (hollow models): floors, pallet racks, desks
   if (kind == 12) {
@@ -173,6 +182,9 @@ if (kind >= 12 && kind <= 14) {
   } else { col = vec3(0.35); rgh = 0.9; }
 } else {
   float u = fc.x, v = fc.y;
+  // office facades (glass and punched windows) are pure repeats: draw them at a larger scale, so a toy
+  // tower has fewer, bigger windows. Other kinds place features at real heights and keep their scale.
+  if (kind == 0 || kind == 4 || kind == 5 || kind == 8) { u *= 0.55; v *= 0.55; }
   if (kind == 0 || kind == 8 || kind == 4 || (kind == 5 && (vari == 2 || vari == 5))) {
     // ---- curtain wall family
     float mw = kind == 0 ? 1.55 : (kind == 8 ? 2.0 : 1.6);
@@ -407,8 +419,49 @@ if (kind >= 12 && kind <= 14) {
   }
 }
 if (kind == 2 || kind == 3 || kind == 6 || kind == 7 || kind == 1) col *= ((kind == 2 && vari == 2 && mtl > 0.8) || (kind == 6 && vari >= 5 && !side && Nr.y > 0.0)) ? 1.0 : vTint.w;
-// scorch / soot from damage
-col *= 1.0 - 0.55 * clamp(dmg - 0.6, 0.0, 1.0) * (0.6 + 0.6 * nz);
+// ---- toy model look: same patterns, plastic materials and pastel colours
+if (kind < 12 && vExt < 0.5) {
+  // cut faces: cream foam-board slabs and columns over soft lilac-grey voids, so a break reads at a glance
+  float ly = fract(P.y / fh);
+  if (side) {
+    float slab = 1.0 - smoothstep(0.10, 0.13, ly), colm = gl(fc.x, 7.2, 0.35);
+    col = mix(vec3(0.42, 0.43, 0.55), vec3(0.95, 0.88, 0.74), clamp(slab + colm * 0.9, 0.0, 1.0));
+  } else col = vec3(0.92, 0.85, 0.71);
+}
+if (kind < 12 && vExt > 0.5) {
+  float mx = max(max(col.r, col.g), col.b), mn = min(min(col.r, col.g), col.b);
+  if (side) {
+    // glass (shiny and smooth before the plastic pass below; frames are rougher) becomes candy glass:
+    // the pane's own hue, bright and saturated, so grey glass turns sky blue and green glass mint;
+    // darker glass stays a deeper shade so light and dark towers still read apart
+    float gls = smoothstep(0.6, 0.8, mtl) * (1.0 - smoothstep(0.16, 0.3, rgh));
+    vec3 hue = col / max(mx, 0.02);
+    vec3 tg = mix(hue, vec3(0.25, 0.60, 1.0), 0.6) * (0.55 + 0.45 * clamp(mx / 0.6, 0.0, 1.0));
+    col = mix(col, tg, gls);
+    // candy paint: walls and frames take the building's pastel, keeping the pattern's light and dark
+    if (vPaint.w > 0.5) col = mix(col, vPaint.rgb * min(1.0, dot(col, vec3(0.2126, 0.7152, 0.0722)) * 1.15), 1.0 - gls);
+  } else if (Nr.y > 0.5) {
+    // dark grey roofs read as holes from above: lift them to a pale blue-grey (coloured roofs keep theirs)
+    float k = (1.0 - smoothstep(0.25, 0.55, mx)) * (1.0 - smoothstep(0.08, 0.2, mx - mn));
+    col = mix(col, col * 0.45 + vec3(0.36, 0.39, 0.44), k);
+    if (vPaint.w > 0.5) col = mix(vPaint.rgb, vec3(1.0), 0.25) * min(1.0, dot(col, vec3(0.2126, 0.7152, 0.0722)) * 1.2 + 0.12);
+  }
+}
+{ float lum = dot(col, vec3(0.2126, 0.7152, 0.0722)); col = max(mix(vec3(lum), col, 1.3), 0.0) * 0.95 + 0.02; }
+// light rim along the building's real corners (where both faces are outside walls), like a moulded edge.
+// Only vertical corners and the roof outline: hollow models are stacks of wall panels whose top and
+// bottom faces count as outside, and rimming those would stripe every facade.
+if (kind < 12 && vExt > 0.5 && Nr.y > -0.5) {
+  int em = int(vInfo.y + 0.5);
+  vec3 e = vSz * 0.5 - abs(vLoc);
+  float ed = 1e4;
+  if (abs(Nr.x) < 0.5 && ((em >> (vLoc.x > 0.0 ? 0 : 1)) & 1) == 1) ed = min(ed, e.x);
+  if (abs(Nr.z) < 0.5 && ((em >> (vLoc.z > 0.0 ? 4 : 5)) & 1) == 1) ed = min(ed, e.z);
+  float w = clamp(fwidth(ed) * 1.4, 0.3, 1.2);
+  col = mix(col, vec3(1.0), (1.0 - smoothstep(w * 0.45, w, ed)) * 0.5);
+}
+mtl *= 0.12; rgh = max(rgh, 0.32); pert *= 0.3; // no mirrors: glossy plastic at most
+col *= 1.0 - 0.3 * clamp(dmg - 0.6, 0.0, 1.0) * (0.6 + 0.6 * nz); // light soot only
 diffuseColor.rgb = col;
 `)
     .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = rgh;')
@@ -455,7 +508,11 @@ scene.add(depthPre);
 export const pieces = new Array(CAP).fill(null);
 const free = [];
 let high = 0;
-let matDirty = false, infoDirty = false, heatDirty = false, tintDirty = false;
+// GPU uploads: each group of instance attributes remembers the lowest and highest instance changed since
+// the last flush, and only that span is sent (the buffers are sized for CAP instances, far more than are
+// usually in use). 'shape' is the rest position and size a piece is drawn with (set once, when it is made).
+const dirty = { mat: [Infinity, -1], info: [Infinity, -1], heat: [Infinity, -1], tint: [Infinity, -1], shape: [Infinity, -1] };
+const touch = (r, i) => { if (i < r[0]) r[0] = i; if (i > r[1]) r[1] = i; };
 export const hotPieces = new Set();
 const _m = new THREE.Matrix4(), _s = new THREE.Vector3(), ZERO_M = new THREE.Matrix4().makeScale(0, 0, 0);
 
@@ -499,9 +556,11 @@ export function addPiece(o) {
   aHeat.setX(idx, 0);
   const t = o.tint || (p.bld && p.bld.tint) || null;
   if (t) aTint.setXYZW(idx, t[0], t[1], t[2], t[3]); else aTint.setXYZW(idx, 1, 1, 1, 1);
-  tintDirty = true;
+  const pt = p.bld && p.bld.paint;
+  if (pt) aPaint.setXYZW(idx, pt[0], pt[1], pt[2], 1); else aPaint.setXYZW(idx, 0, 0, 0, 0);
+  touch(dirty.tint, idx); touch(dirty.shape, idx);
   writeMatrix(p);
-  infoDirty = true; heatDirty = true;
+  touch(dirty.info, idx); touch(dirty.heat, idx);
   return p;
 }
 
@@ -509,13 +568,13 @@ export function writeMatrix(p) {
   _s.set(2 * p.hx, 2 * p.hy, 2 * p.hz);
   _m.compose(p.pos, p.quat, _s);
   mesh.setMatrixAt(p.idx, _m);
-  matDirty = true;
+  touch(dirty.mat, p.idx);
 }
 export function setDamage(p, d) {
   if (d <= p.dmg) return;
   p.dmg = Math.min(1.6, d);
   aInfo.setZ(p.idx, p.dmg);
-  infoDirty = true;
+  touch(dirty.info, p.idx);
 }
 /** axis: 0 = only faces facing +-x glow, 1 = +-z, 2 = every face */
 export function setHeat(p, h, axis = 2) {
@@ -523,7 +582,7 @@ export function setHeat(p, h, axis = 2) {
   p.heat = Math.max(p.heat, h);
   aHeat.setX(p.idx, (p.heatAxis ?? 2) * 10 + Math.min(p.heat, 1.6));
   hotPieces.add(p);
-  heatDirty = true;
+  touch(dirty.heat, p.idx);
 }
 
 /**
@@ -554,16 +613,16 @@ export function removePiece(p) {
   pieces[p.idx] = null;
   hotPieces.delete(p);
   aHeat.setX(p.idx, 0);
+  touch(dirty.mat, p.idx); touch(dirty.heat, p.idx);
   free.push(p.idx);
   p.idx = -1;
-  matDirty = true; heatDirty = true;
 }
 
 export function clearAll() {
   for (let i = 0; i < high; i++) { pieces[i] = null; mesh.setMatrixAt(i, ZERO_M); }
+  if (high) { touch(dirty.mat, 0); touch(dirty.mat, high - 1); }
   free.length = 0; high = 0; mesh.count = 0;
   hotPieces.clear();
-  matDirty = true;
 }
 
 /**
@@ -638,11 +697,17 @@ export function sliceStatic(p, axis, at, kerf) {
   return out;
 }
 
+function send(r, attrs) {
+  if (r[1] < r[0]) return;
+  for (const a of attrs) { a.clearUpdateRanges(); a.addUpdateRange(r[0] * a.itemSize, (r[1] - r[0] + 1) * a.itemSize); a.needsUpdate = true; }
+  r[0] = Infinity; r[1] = -1;
+}
 export function flushGPU() {
-  if (matDirty) { mesh.instanceMatrix.needsUpdate = true; matDirty = false; }
-  if (infoDirty) { aInfo.needsUpdate = true; infoDirty = false; }
-  if (tintDirty) { aTint.needsUpdate = true; tintDirty = false; }
-  if (heatDirty) { aHeat.needsUpdate = true; heatDirty = false; }
+  send(dirty.mat, [mesh.instanceMatrix]);
+  send(dirty.info, [aInfo]);
+  send(dirty.tint, [aTint, aPaint]);
+  send(dirty.heat, [aHeat]);
+  send(dirty.shape, [aRest, aSize]);
 }
 
 export function coolDown(dt) {
@@ -650,8 +715,8 @@ export function coolDown(dt) {
   for (const p of hotPieces) {
     p.heat = Math.max(0, p.heat - dt * 0.16);
     aHeat.setX(p.idx, p.heat > 0 ? (p.heatAxis ?? 2) * 10 + Math.min(p.heat, 1.6) : 0);
+    touch(dirty.heat, p.idx);
     if (p.heat <= 0) hotPieces.delete(p);
   }
-  heatDirty = true;
 }
-export function markInfo(p) { aInfo.setXYZW(p.idx, p.kind, p.mask, p.dmg, p.vari); infoDirty = true; }
+export function markInfo(p) { aInfo.setXYZW(p.idx, p.kind, p.mask, p.dmg, p.vari); touch(dirty.info, p.idx); }

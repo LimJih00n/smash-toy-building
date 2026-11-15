@@ -105,7 +105,9 @@ float tn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
     .replace('#include <map_fragment>', `#include <map_fragment>
 {
   float dn = tn(vWp.xz*1.7)*0.6 + tn(vWp.xz*6.3)*0.4;
-  diffuseColor.rgb *= 0.9 + 0.2*dn;
+  // flat, brighter, more saturated paint: a model railway baseboard rather than satellite ground
+  diffuseColor.rgb *= 0.97 + 0.06*dn;
+  { vec3 c = diffuseColor.rgb; float l = dot(c, vec3(0.2126,0.7152,0.0722)); diffuseColor.rgb = max(mix(vec3(l), c, 1.5), 0.0) * 1.2 + 0.045; }
   float d = abs(vDig);
   if (d > 0.05) {
     float strata = 0.5 + 0.5*sin((vWp.y)*2.1 + tn(vWp.xz*0.3)*5.0);
@@ -136,20 +138,20 @@ mesh.receiveShadow = true;
 mesh.name = 'terrain';
 scene.add(mesh);
 
-// outer ground so the playable square never floats in a void
+// the map floats on a plinth with a white rim, like a model on a display stand
 {
-  const shape = new THREE.Shape();
-  const R = 3200;
-  shape.moveTo(-R, -R); shape.lineTo(R, -R); shape.lineTo(R, R); shape.lineTo(-R, R); shape.lineTo(-R, -R);
-  const hole = new THREE.Path();
-  const a = T.x0 + 0.5, b = T.x0 + T.size - 0.5;
-  hole.moveTo(a, a); hole.lineTo(a, b); hole.lineTo(b, b); hole.lineTo(b, a); hole.lineTo(a, a);
-  shape.holes.push(hole);
-  const g = new THREE.ShapeGeometry(shape);
-  g.rotateX(Math.PI / 2);
-  const outer = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0x77866a, roughness: 1 }));
-  outer.position.y = -0.03; outer.receiveShadow = true;
-  scene.add(outer);
+  const S = T.size, cx = T.x0 + S / 2, cz = T.z0 + S / 2, D = 40, R = 3.2, RH = 2.4;
+  const body = new THREE.BoxGeometry(S + 0.4, D, S + 0.4).translate(cx, -D / 2 - RH + 0.4, cz);
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xe6dcc8, roughness: 0.85 });
+  const none = new THREE.MeshBasicMaterial({ visible: false });
+  scene.add(new THREE.Mesh(body, [bodyMat, bodyMat, none, bodyMat, bodyMat, bodyMat])); // no top: craters must stay visible
+  const rimMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 });
+  const h = S / 2 + R / 2;
+  for (const [x, z, w, d] of [[cx, cz - h, S + 2 * R, R], [cx, cz + h, S + 2 * R, R], [cx - h, cz, R, S], [cx + h, cz, R, S]]) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, RH, d), rimMat);
+    m.position.set(x, 0.4 - RH / 2, z); m.receiveShadow = true;
+    scene.add(m);
+  }
 }
 
 // ---------- queries

@@ -39,6 +39,14 @@ export async function mode() {
   return { kind: 'local', canSubmit: true };
 }
 
+/** this device's best (fastest) run on a map, or null */
+export function localBest(map) { return readLocal()[field(map, 'all')] || null; }
+/** keep a finished run as this device's best when it is faster (no name, nothing sent anywhere) */
+export function saveLocalBest(run) {
+  const loc = readLocal(), k = field(run.map, 'all');
+  if (!loc[k] || run.ms < loc[k].ms) { loc[k] = { map: run.map, name: '나', ms: Math.round(run.ms), dmg: Math.round(run.dmg || 0), shots: run.shots | 0, at: Date.now() }; writeLocal(loc); }
+}
+
 /** submit a finished run; resolves { ok, rank?, note? } */
 export async function submit(run) {
   const name = cleanName(run.name) || '익명';

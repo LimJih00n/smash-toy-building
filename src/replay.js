@@ -3,16 +3,22 @@
 // A clip starts when a target building collapses (or the run completes) and keeps extending while
 // more things fall, up to MAX seconds. The newest finished clip is kept for saving / sharing.
 const MAX = 12;
-const W = 960;
+// phones encode the clip while the game is at its busiest (a collapse): a smaller frame and a codec
+// they usually encode in hardware (H.264 / VP8 rather than VP9) keep that off the game's back
+const PHONE = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+const W = PHONE ? 640 : 960;
 
 export const supported = typeof MediaRecorder !== 'undefined' && !!HTMLCanvasElement.prototype.captureStream;
 
+let cap = null, capKey = ''; // the caption bar, pre-drawn
 let cv = null, g = null, rec = null, chunks = [], t0 = 0, stopAt = 0, mime = '', final = false;
 let clip = null; // { blob, url, ext, final, sec }
 const listeners = new Set();
 
 function pickMime() {
-  for (const m of ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4;codecs=avc1', 'video/mp4'])
+  const order = PHONE ? ['video/mp4;codecs=avc1', 'video/webm;codecs=h264', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4']
+    : ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4;codecs=avc1', 'video/mp4'];
+  for (const m of order)
     if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m;
   return '';
 }
@@ -25,7 +31,7 @@ export function trigger(sec = 6, isFinal = false) {
   if (rec) { stopAt = Math.min(t0 + MAX, Math.max(stopAt, now + sec)); return; }
   try {
     mime = pickMime();
-    rec = new MediaRecorder(cv.captureStream(30), { mimeType: mime || undefined, videoBitsPerSecond: 4_000_000 });
+    rec = new MediaRecorder(cv.captureStream(30), { mimeType: mime || undefined, videoBitsPerSecond: PHONE ? 2_500_000 : 4_000_000 });
   } catch (e) { rec = null; return; }
   chunks = [];
   rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
@@ -54,13 +60,20 @@ export function tick(glCanvas, caption) {
   const h = Math.round(W * glCanvas.height / glCanvas.width);
   if (cv.height !== h) cv.height = h;
   g.drawImage(glCanvas, 0, 0, W, h);
-  // caption bar
-  g.fillStyle = 'rgba(10,11,14,0.62)'; g.fillRect(0, h - 46, W, 46);
-  g.fillStyle = '#3182f6'; g.font = '800 22px "Pretendard Variable", Pretendard, sans-serif'; g.textBaseline = 'middle';
-  g.fillText('회사 때려부수기', 16, h - 23);
-  g.fillStyle = '#ffffff'; g.font = '600 18px "Pretendard Variable", Pretendard, sans-serif';
-  g.fillText(caption.map, 190, h - 23);
-  g.textAlign = 'right'; g.fillText(caption.time, W - 16, h - 23); g.textAlign = 'left';
+  // caption bar: drawn once per new text (the time changes every second), then just copied each frame
+  const key = caption.map + '|' + caption.time;
+  if (key !== capKey) {
+    capKey = key;
+    const c = cap.getContext('2d');
+    c.clearRect(0, 0, W, 46);
+    c.fillStyle = 'rgba(10,11,14,0.62)'; c.fillRect(0, 0, W, 46);
+    c.fillStyle = '#3182f6'; c.font = '800 22px "Pretendard Variable", Pretendard, sans-serif'; c.textBaseline = 'middle';
+    c.fillText('회사 때려부수기', 16, 23);
+    c.fillStyle = '#ffffff'; c.font = '600 18px "Pretendard Variable", Pretendard, sans-serif';
+    c.fillText(caption.map, 190, 23);
+    c.textAlign = 'right'; c.fillText(caption.time, W - 16, 23); c.textAlign = 'left';
+  }
+  g.drawImage(cap, 0, h - 46);
   if (performance.now() / 1000 > stopAt && rec.state === 'recording') rec.stop();
 }
 
@@ -71,6 +84,7 @@ export function init() {
   cv.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1';
   document.body.appendChild(cv);
   g = cv.getContext('2d');
+  cap = document.createElement('canvas'); cap.width = W; cap.height = 46;
 }
 export const recording = () => !!rec;
 export const latest = () => clip;

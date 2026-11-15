@@ -1,7 +1,8 @@
 // The six weapons. Each one is an "action" with its own phases (prepare -> travel -> impact ->
 // aftermath) and runs from the main loop until it reports it's finished.
 import * as THREE from 'three';
-import { scene, camera, controls, exposure, grabLight, flashLight } from './engine.js';
+import { scene, camera, controls, exposure, grabLight, flashLight, keepSharp, composer } from './engine.js';
+import * as TOY from './toyweapons.js';
 import * as terrain from './terrain.js';
 import * as B from './blocks.js';
 import * as P from './physics.js';
@@ -10,10 +11,10 @@ import * as SG from './staticgrid.js';
 import * as props from './props.js';
 import * as FX from './fx.js';
 import * as A from './audio.js';
-import { rand, clamp, lerp, smooth01, randomUnit, TAU, fbm } from './util.js';
+import { rand, clamp, lerp, smooth01, randomUnit, TAU } from './util.js';
 
 export const actions = [];
-export const stats = { missilesLaunched: 0, missileImpacts: 0, salvos: 0, laserPoints: 0, meteors: 0, bombs: 0, hammers: 0, nukes: 0, rounds: 0, roundHits: 0 };
+export const stats = { missilesLaunched: 0, missileImpacts: 0, salvos: 0, laserPoints: 0, meteors: 0, bombs: 0, hammers: 0, nukes: 0, rounds: 0, roundHits: 0, slashes: 0 };
 export const ui = { toast: null, banner: null, onAttack: null };
 const UP = new THREE.Vector3(0, 1, 0), DOWN = new THREE.Vector3(0, -1, 0);
 const _v = new THREE.Vector3(), _w = new THREE.Vector3();
@@ -99,20 +100,7 @@ S.events.chunk = (p, f) => {
 };
 
 // ---------------------------------------------------------------- 1. HAMMER
-const hammerGeo = (() => {
-  const g = new THREE.Group();
-  const steel = new THREE.MeshStandardMaterial({ color: 0x4a5056, metalness: 0.85, roughness: 0.32 });
-  const face = new THREE.MeshStandardMaterial({ color: 0xb8bec3, metalness: 1, roughness: 0.18 });
-  const wood = new THREE.MeshStandardMaterial({ color: 0x7a5233, roughness: 0.7 });
-  const grip = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9 });
-  const head = new THREE.Mesh(new THREE.BoxGeometry(2.0, 2.0, 4.6), steel);
-  const f1 = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, 0.5, 20).rotateX(Math.PI / 2), face); f1.position.z = 2.5;
-  const f2 = f1.clone(); f2.position.z = -2.5;
-  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.36, 13, 12), wood); handle.position.y = -7.2;
-  const gr = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 3.4, 12), grip); gr.position.y = -12.2;
-  for (const m of [head, f1, f2, handle, gr]) { m.castShadow = true; g.add(m); }
-  return g;
-})();
+const hammerGeo = TOY.hammer();
 class Hammer {
   constructor(hit) {
     stats.hammers++;
@@ -241,18 +229,7 @@ function updateTrail(mesh, pts, sideAxis, width, col, widthFn) {
 }
 
 // ---------------------------------------------------------------- 2. BOMB
-const bombProto = (() => {
-  const g = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.SphereGeometry(1.25, 24, 16), new THREE.MeshStandardMaterial({ color: 0x15171a, metalness: 0.55, roughness: 0.35 }));
-  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.5, 0.45, 14), new THREE.MeshStandardMaterial({ color: 0x5a5f63, metalness: 0.8, roughness: 0.3 }));
-  cap.position.y = 1.25;
-  const curve = new THREE.CatmullRomCurve3([new THREE.Vector3(0, 1.4, 0), new THREE.Vector3(0.2, 1.9, 0), new THREE.Vector3(0.6, 2.2, 0.1), new THREE.Vector3(0.9, 2.1, 0.2)]);
-  const fuse = new THREE.Mesh(new THREE.TubeGeometry(curve, 12, 0.08, 6), new THREE.MeshStandardMaterial({ color: 0xc8b48a, roughness: 0.9 }));
-  const band = new THREE.Mesh(new THREE.TorusGeometry(1.25, 0.07, 6, 32).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xb02a1a, roughness: 0.5 }));
-  for (const m of [body, cap, fuse, band]) { m.castShadow = true; g.add(m); }
-  g.userData.tip = [0.9, 2.1, 0.2];
-  return g;
-})();
+const bombProto = TOY.bomb();
 class Bomb {
   constructor(hit) {
     stats.bombs++;
@@ -325,20 +302,7 @@ const beamMat = (inner, outer, alpha) => new THREE.ShaderMaterial({
   transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
 });
 const beamGeo = new THREE.CylinderGeometry(1, 1, 1, 24, 1, true).translate(0, 0.5, 0);
-const satProto = (() => {
-  const g = new THREE.Group();
-  const hull = new THREE.MeshStandardMaterial({ color: 0xd8dde2, metalness: 0.7, roughness: 0.3 });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x1b2430, metalness: 0.6, roughness: 0.4 });
-  const panel = new THREE.MeshStandardMaterial({ color: 0x1d3a6a, metalness: 0.4, roughness: 0.25, emissive: 0x081830 });
-  const body = new THREE.Mesh(new THREE.CylinderGeometry(5, 6, 9, 6), hull);
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(6.5, 0.8, 8, 24).rotateX(Math.PI / 2), dark); ring.position.y = -4.5;
-  const lens = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 4.2, 2.4, 20), dark); lens.position.y = -5.8;
-  const lp = new THREE.Mesh(new THREE.BoxGeometry(22, 0.4, 7), panel); lp.position.x = -17;
-  const rp = lp.clone(); rp.position.x = 17;
-  const arm = new THREE.Mesh(new THREE.BoxGeometry(40, 0.6, 0.6), hull);
-  for (const m of [body, ring, lens, lp, rp, arm]) g.add(m);
-  return g;
-})();
+const satProto = TOY.satellite();
 const pathMat = new THREE.ShaderMaterial({
   uniforms: { uT: { value: 0 }, uC: { value: new THREE.Color(1.0, 0.25, 0.6) } },
   vertexShader: 'attribute float a; varying float vA; void main(){ vA=a; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
@@ -627,24 +591,8 @@ float mn(vec3 p){ vec3 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
 }`);
 };
 meteorMat.userData.uHeat = { value: 0 };
-const meteorGeo = (() => {
-  const g = new THREE.IcosahedronGeometry(1, 5);
-  const p = g.attributes.position;
-  const v = new THREE.Vector3();
-  const craters = Array.from({ length: 9 }, () => ({ c: randomUnit(new THREE.Vector3()), r: rand(0.25, 0.5), d: rand(0.06, 0.13) }));
-  for (let i = 0; i < p.count; i++) {
-    v.fromBufferAttribute(p, i).normalize();
-    let r = 1 + 0.22 * (fbm(v.x * 2.1 + v.z * 0.7 + 3, v.y * 2.1 - v.z * 1.3, 4) - 0.5) * 2 + 0.06 * (fbm(v.x * 7 + 1, v.y * 7 + v.z * 5, 3) - 0.5) * 2;
-    for (const c of craters) { const d = v.distanceTo(c.c); if (d < c.r) { const q = d / c.r; r -= c.d * (1 - q * q) - (q > 0.8 ? c.d * 0.6 * (q - 0.8) * 5 * (1 - q) * 5 : 0); } }
-    v.multiplyScalar(r); v.x *= 1.12; v.z *= 0.92;
-    p.setXYZ(i, v.x, v.y, v.z);
-  }
-  g.computeVertexNormals();
-  // guard against zero-length normals (they light as NaN, which the bloom turns into black blocks)
-  const nm = g.attributes.normal;
-  for (let i = 0; i < nm.count; i++) { const x = nm.getX(i), y = nm.getY(i), z = nm.getZ(i), l = Math.hypot(x, y, z); if (!(l > 1e-6)) { v.fromBufferAttribute(p, i).normalize(); nm.setXYZ(i, v.x, v.y, v.z); } }
-  return g;
-})();
+meteorMat.flatShading = true; meteorMat.color.set(0x6a5040); // faceted low-poly rock
+const meteorGeo = TOY.meteorGeo();
 const plasmaShellMat = new THREE.ShaderMaterial({
   uniforms: { uA: { value: 0 }, uT: { value: 0 } },
   vertexShader: 'varying vec3 vN; varying vec3 vV; varying vec3 vP; void main(){ vP = position; vec4 mv = modelViewMatrix*vec4(position,1.0); vN = normalize(normalMatrix*normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix*mv; }',
@@ -654,6 +602,18 @@ const plasmaShellMat = new THREE.ShaderMaterial({
     vec3 c = mix(vec3(2.4,0.7,0.12), vec3(2.6,2.0,1.4), front) * f * flick;
     gl_FragColor = vec4(c*uA, f*uA); }`,
   transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+});
+// the meteor's wake is alpha-blended (not additive) so it reads against a bright daytime sky:
+// white-hot at the rock, orange, then a long dark smoke tail
+const meteorTrailMat = () => new THREE.ShaderMaterial({
+  vertexShader: 'attribute float a; varying float vA; void main(){ vA = a; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+  fragmentShader: `varying float vA; void main(){
+    float k = clamp(vA / 0.75, 0.0, 1.0);
+    vec3 smoke = vec3(0.46, 0.43, 0.41), fire = vec3(1.9, 0.75, 0.2), hot = vec3(2.6, 2.1, 1.5);
+    vec3 c = mix(smoke, fire, smoothstep(0.35, 0.8, k));
+    c = mix(c, hot, smoothstep(0.88, 1.0, k));
+    gl_FragColor = vec4(c, smoothstep(0.0, 0.35, k) * 0.88); }`,
+  transparent: true, depthWrite: false, side: THREE.DoubleSide,
 });
 class Meteor {
   constructor(hit) {
@@ -681,24 +641,14 @@ class Meteor {
     this.grp = new THREE.Group(); this.grp.add(this.rock, this.shell); scene.add(this.grp);
     this.spinAxis = randomUnit(new THREE.Vector3());
     this.trail = []; this.trailMesh = makeTrail(0xffffff); this.trailMesh.renderOrder = 4;
-    // the wake is alpha-blended (not additive) so it reads against a bright daytime sky:
-    // white-hot at the rock, orange, then a long dark smoke tail
-    this.trailMesh.material = new THREE.ShaderMaterial({
-      vertexShader: 'attribute float a; varying float vA; void main(){ vA = a; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
-      fragmentShader: `varying float vA; void main(){
-        float k = clamp(vA / 0.75, 0.0, 1.0);
-        vec3 smoke = vec3(0.46, 0.43, 0.41), fire = vec3(1.9, 0.75, 0.2), hot = vec3(2.6, 2.1, 1.5);
-        vec3 c = mix(smoke, fire, smoothstep(0.35, 0.8, k));
-        c = mix(c, hot, smoothstep(0.88, 1.0, k));
-        gl_FragColor = vec4(c, smoothstep(0.0, 0.35, k) * 0.88); }`,
-      transparent: true, depthWrite: false, side: THREE.DoubleSide,
-    });
+    this.trailMesh.material = meteorTrailMat();
     this.light = grabLight(); this.light.update = () => true; this.light.light.color.set(0xff8a3a); this.light.light.distance = 600;
     this.sfx = A.rumbleLoop(); this.sfx.set(0.05);
     // the camera stays free during the fall so the player can move to see past buildings
     if (ui.toast) ui.toast('운석 접근 중 · 카메라는 자유롭게 움직일 수 있습니다');
     A.whoosh(this.start, 3);
   }
+
   posAt(t) { const k = Math.pow(clamp(t / this.T, 0, 1), 1.5); return this.start.clone().lerp(this.c, k); }
   cine(dt, look) {
     // ease the camera to the vantage point and aim between rock and target
@@ -796,27 +746,7 @@ class Meteor {
 export const W_cine = { active: false };
 
 // ---------------------------------------------------------------- 5. MISSILE x3
-const missileProto = (() => {
-  const g = new THREE.Group();
-  const white = new THREE.MeshStandardMaterial({ color: 0xe8eaec, metalness: 0.5, roughness: 0.35 });
-  const grey = new THREE.MeshStandardMaterial({ color: 0x50575e, metalness: 0.7, roughness: 0.35 });
-  const red = new THREE.MeshStandardMaterial({ color: 0xb4231a, roughness: 0.5 });
-  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 4.6, 16).rotateX(Math.PI / 2), white);
-  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.42, 1.5, 16).rotateX(Math.PI / 2), grey); nose.position.z = 3.05;
-  const band = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.44, 0.3, 16).rotateX(Math.PI / 2), red); band.position.z = 1.6;
-  const noz = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.38, 0.5, 14, 1, true).rotateX(Math.PI / 2), grey); noz.position.z = -2.5;
-  g.add(body, nose, band, noz);
-  for (let i = 0; i < 4; i++) {
-    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.1, 0.9), grey);
-    fin.position.set(0, 0.62, -1.9); const pv = new THREE.Group(); pv.add(fin); pv.rotation.z = i * Math.PI / 2 + Math.PI / 4; g.add(pv);
-    const can = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.5, 0.5), grey); can.position.set(0, 0.5, 1.0); const pc = new THREE.Group(); pc.add(can); pc.rotation.z = i * Math.PI / 2 + Math.PI / 4; g.add(pc);
-  }
-  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.34, 3.2, 12, 1, true).rotateX(-Math.PI / 2).translate(0, 0, -4.3),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 1.6, 0.6), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
-  flame.name = 'flame'; g.add(flame);
-  g.traverse((m) => { if (m.isMesh && m !== flame) m.castShadow = true; });
-  return g;
-})();
+const missileProto = TOY.missile();
 class Missile {
   constructor(salvo, start, target, delay, k) {
     this.salvo = salvo; this.target = target; this.delay = delay; this.t = 0; this.state = 'wait';
@@ -901,24 +831,7 @@ class Salvo {
 }
 
 // ---------------------------------------------------------------- 6. NUKE
-const nukeProto = (() => {
-  const g = new THREE.Group();
-  const olive = new THREE.MeshStandardMaterial({ color: 0x5b6046, metalness: 0.5, roughness: 0.45 });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x23262a, metalness: 0.7, roughness: 0.35 });
-  const yellow = new THREE.MeshStandardMaterial({ color: 0xe8c21a, roughness: 0.5 });
-  const body = new THREE.Mesh(new THREE.CylinderGeometry(1.45, 1.45, 6.5, 24), olive);
-  const nose = new THREE.Mesh(new THREE.SphereGeometry(1.45, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), olive); nose.rotation.x = Math.PI; nose.position.y = -3.25;
-  const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 1.45, 2.4, 24), dark); tail.position.y = 4.45;
-  const band = new THREE.Mesh(new THREE.CylinderGeometry(1.48, 1.48, 0.9, 24), yellow); band.position.y = -1.2;
-  g.add(body, nose, tail, band);
-  for (let i = 0; i < 4; i++) {
-    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.4, 2.2), dark);
-    fin.position.set(0, 5.2, 1.3); const pv = new THREE.Group(); pv.add(fin); pv.rotation.y = i * Math.PI / 2; g.add(pv);
-  }
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.75, 0.12, 6, 24).rotateX(Math.PI / 2), dark); ring.position.y = 6.2; g.add(ring);
-  g.traverse((m) => { if (m.isMesh) m.castShadow = true; });
-  return g;
-})();
+const nukeProto = TOY.nuke();
 const fireballMat = new THREE.ShaderMaterial({
   uniforms: { uT: { value: 0 }, uK: { value: 0 } },
   vertexShader: `uniform float uT; varying vec3 vN; varying vec3 vV; varying vec3 vP;
@@ -1058,10 +971,7 @@ let rig = null;
 function gunRig() {
   if (rig) return rig;
   scene.add(camera); // children of the camera render with it
-  const dark = new THREE.MeshStandardMaterial({ color: 0x2b2f33, metalness: 0.75, roughness: 0.38 });
-  const steel = new THREE.MeshStandardMaterial({ color: 0x6d7378, metalness: 0.9, roughness: 0.28 });
-  const olive = new THREE.MeshStandardMaterial({ color: 0x4a5040, metalness: 0.35, roughness: 0.6 });
-  const brass = new THREE.MeshStandardMaterial({ color: 0xb08a3c, metalness: 0.85, roughness: 0.35 });
+  const { dark, steel, olive, brass } = TOY.gunMats(); // toy blaster colours
   const g = new THREE.Group(); // +z points down the barrels
   const recoil = new THREE.Group(); g.add(recoil);
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.36, 0.9), olive); body.position.z = -0.2; recoil.add(body);
@@ -1074,7 +984,7 @@ function gunRig() {
   const clamp2 = clamp1.clone(); clamp2.position.z = 1.05; spin.add(clamp2);
   for (let i = 0; i < 6; i++) {
     const a = i / 6 * Math.PI * 2;
-    const br = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.35, 8).rotateX(Math.PI / 2), steel);
+    const br = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.35, 8).rotateX(Math.PI / 2), steel);
     br.position.set(Math.cos(a) * 0.1, Math.sin(a) * 0.1, 0.7); spin.add(br);
   }
   const fc = document.createElement('canvas'); fc.width = fc.height = 128;
@@ -1087,7 +997,7 @@ function gunRig() {
   const flash = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.9), new THREE.MeshBasicMaterial({ map: ftex, color: new THREE.Color(2.2, 1.6, 1.0), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false }));
   flash.position.z = 1.55; flash.name = 'flash'; recoil.add(flash);
   const flash2 = flash.clone(); flash2.material = flash.material; flash2.rotation.y = Math.PI / 2; flash2.position.z = 1.75; flash2.scale.set(0.5, 1.6, 1); recoil.add(flash2);
-  g.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.renderOrder = 10; } });
+  g.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.renderOrder = 10; if (!m.material.transparent) keepSharp(m.material); } });
   g.position.set(1.05, -0.8, -2.7); g.scale.setScalar(0.85);
   g.visible = false;
   g.userData = { recoil, spin, flash, flash2, spinV: 0, kick: 0 };
@@ -1095,10 +1005,19 @@ function gunRig() {
   rig = g;
   return g;
 }
-export function setGunVisible(v) { gunRig().visible = v; if (v) gunRig().lookAt(camera.localToWorld(new THREE.Vector3(0, 0, -60))); }
+// the lens is narrow (and wider again on portrait screens), which would magnify the rig or push
+// it off a tall screen. Keep it at the size it has through the default 45 deg lens, a bit smaller on
+// portrait, and inside the right edge.
+function placeRig(g) {
+  const t = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+  const z = 2.7 * Math.tan(Math.PI / 8) / t / clamp(camera.aspect / 1.2, 0.6, 1);
+  g.position.set(Math.min(1.05 * z / 2.7, 0.62 * z * t * camera.aspect), -0.8 * z / 2.7, -z);
+}
+export function setGunVisible(v) { gunRig().visible = v; if (v) placeRig(gunRig()); if (v) gunRig().lookAt(camera.localToWorld(new THREE.Vector3(0, 0, -60))); }
 const _aimTmp = new THREE.Vector3();
 function rigTick(dt, aim, firing) {
   const g = gunRig(); if (!g.visible) return;
+  placeRig(g);
   const u = g.userData;
   // ease the barrels toward the target (or straight ahead when idle)
   const tgt = aim || camera.localToWorld(_aimTmp.set(0, 0, -60));
@@ -1203,6 +1122,279 @@ export function gunStart(hit) {
 export function gunAim(hit) { const g = actions.find((x) => x instanceof Gun && x.held); if (g) g.setAim(hit); }
 export function gunStop() { for (const a of actions) if (a instanceof Gun) a.stop(); }
 
+// ---------------------------------------------------------------- 8. SWORD
+// Swipe across the screen: a giant toy sword swings along the swipe and cuts everything on the plane
+// through the camera and the swipe (S.slash), within the stretch of screen the swipe covered. Like the
+// gun, the sword hangs off the camera: it rests low on the right while the sword is selected.
+let srig = null;
+const SW_Z = 3, SW_LEN = 7.6; // depth of the rig in front of the camera; blade length in model units
+function swordRig() {
+  if (srig) return srig;
+  scene.add(camera);
+  const g = TOY.sword();
+  g.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.renderOrder = 10; keepSharp(m.material); } });
+  g.visible = false;
+  camera.add(g);
+  srig = g;
+  return g;
+}
+/** camera-space point for a screen position (NDC) at depth z */
+function camPt(nx, ny, z, out = new THREE.Vector3()) {
+  const t = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+  return out.set(nx * t * camera.aspect * z, ny * t * z, -z);
+}
+function restSword(g) { applyPose(g, restPose()); }
+let swordOn = false; // the sword is the selected tool (it stays in view between slashes)
+export function setSwordVisible(v) { swordOn = v; const g = swordRig(); g.visible = swordOn; if (swordOn) restSword(g); }
+
+// the sword's trail and the wave: white core, sky-blue rim, normal blending so they read on a bright sky
+const waveMat = () => new THREE.ShaderMaterial({
+  uniforms: { uA: { value: 1 } },
+  vertexShader: 'attribute vec2 w; varying vec2 vW; void main(){ vW = w; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform float uA; varying vec2 vW;
+    void main(){
+      float core = smoothstep(0.0, 0.55, vW.y) * (1.0 - smoothstep(0.85, 1.0, vW.y)); // bright toward the leading edge
+      float a = smoothstep(0.0, 0.25, vW.y) * smoothstep(0.0, 0.12, vW.x) * smoothstep(0.0, 0.12, 1.0 - vW.x);
+      vec3 c = mix(vec3(0.35, 0.78, 1.0), vec3(1.0), core);
+      gl_FragColor = vec4(c, a * uA * 0.95);
+    }`,
+  transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false,
+});
+/** a strip of n+1 vertex pairs with (along, across) coordinates in attribute w */
+function stripMesh(n) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array((n + 1) * 2 * 3), 3));
+  const wv = new Float32Array((n + 1) * 2 * 2);
+  for (let i = 0; i <= n; i++) { wv[4 * i] = wv[4 * i + 2] = i / n; wv[4 * i + 1] = 0; wv[4 * i + 3] = 1; }
+  g.setAttribute('w', new THREE.BufferAttribute(wv, 2));
+  const idx = []; for (let i = 0; i < n; i++) { const a = 2 * i; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  g.setIndex(idx);
+  const m = new THREE.Mesh(g, waveMat()); m.frustumCulled = false; m.renderOrder = 9; scene.add(m);
+  return m;
+}
+function poseOf(grip, target, len) {
+  const y = target.clone().sub(grip).normalize();
+  const z = new THREE.Vector3(0, 0, 1).addScaledVector(y, -y.z).normalize();
+  const x = new THREE.Vector3().crossVectors(y, z);
+  return { q: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z)), p: grip.clone(), s: len / SW_LEN };
+}
+function restPose() {
+  const hh = SW_Z * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+  return poseOf(camPt(0.86, -1.1, SW_Z), camPt(0.62, -0.5, SW_Z), hh * 0.72);
+}
+function applyPose(g, a, b = null, k = 0) {
+  if (!b) { g.quaternion.copy(a.q); g.position.copy(a.p); g.scale.setScalar(a.s); return; }
+  g.quaternion.copy(a.q).slerp(b.q, k); g.position.copy(a.p).lerp(b.p, k); g.scale.setScalar(lerp(a.s, b.s, k));
+}
+
+// timeline (s): wind-up, swing, follow-through hold, back to rest
+const SW_WIND = 0.09, SW_SWING = 0.11, SW_HOLD = 0.1, SW_BACK = 0.25;
+// rapid slashes overlap: the newest one moves the sword (starting from wherever the last one left it),
+// the older ones still fly their waves and fade their trails
+let curSlash = null;
+class Slash {
+  constructor(a, b) {
+    this.a = a; this.b = b; this.t = 0;
+    const sg = swordRig();
+    this.startPose = sg.visible ? { q: sg.quaternion.clone(), p: sg.position.clone(), s: sg.scale.x } : restPose();
+    sg.visible = true; curSlash = this;
+    const pa = camPt(a.x, a.y, SW_Z), pb = camPt(b.x, b.y, SW_Z), d = pb.clone().sub(pa);
+    // the hand sits off to the side of the swipe (below it, or right of a vertical one) and sweeps the blade across
+    const hh = SW_Z * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+    const perp = new THREE.Vector3(-d.y, d.x, 0).normalize();
+    if (Math.abs(perp.y) > 0.3 ? perp.y > 0 : perp.x < 0) perp.negate();
+    const grip = pa.clone().add(pb).multiplyScalar(0.5).addScaledVector(perp, Math.max(1.3 * hh, 0.55 * d.length()));
+    const wind = pa.clone().addScaledVector(d, -0.35), thru = pb.clone().addScaledVector(d, 0.25);
+    const len = Math.max(wind.distanceTo(grip), thru.distanceTo(grip)) * 1.02;
+    this.grip = grip; this.len = len; this.wind = wind; this.thru = thru;
+    this.windPose = poseOf(grip.clone().addScaledVector(perp, 0.25 * hh), wind, len * 0.92); // pulled back and a little lower
+    this.thruPose = poseOf(grip, thru, len);
+    this.trail = []; this.sides = []; this.trailMesh = stripMesh(40);
+    // the cut: the plane through the camera and both ends of the swipe, as far as the swipe reached
+    // on screen. Fixed now, so moving the camera while the wave flies changes nothing.
+    camera.updateMatrixWorld(); // the matrices may be a frame old (or never rendered yet)
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(a, camera); this.da = rc.ray.direction.clone();
+    rc.setFromCamera(b, camera); this.db = rc.ray.direction.clone();
+    this.o = camera.position.clone();
+    this.n = new THREE.Vector3().crossVectors(this.da, this.db);
+    this.ok = this.n.lengthSq() > 1e-10;
+    if (this.ok) this.n.normalize();
+    const vp = camera.projectionMatrix.clone().multiply(camera.matrixWorldInverse);
+    const W2 = innerWidth / 2, H2 = innerHeight / 2;
+    const ax = a.x * W2, ay = a.y * H2, dx = b.x * W2 - ax, dy = b.y * H2 - ay, L2 = dx * dx + dy * dy;
+    const v = new THREE.Vector3();
+    this.inside = (p) => { v.copy(p).applyMatrix4(vp); if (v.z > 1 || v.z < -1) return false; const t = ((v.x * W2 - ax) * dx + (v.y * H2 - ay) * dy) / L2; return t > -0.03 && t < 1.03; };
+    this.plan = this.ok ? S.slashPlan(this.o, this.n, this.inside) : [];
+    this.wave = null; this.hits = 0;
+    A.swing();
+  }
+  update(dt) {
+    this.t += dt;
+    const g = swordRig(), t = this.t, own = curSlash === this;
+    const pose = (...a) => { if (own) applyPose(g, ...a); };
+    const t1 = SW_WIND, t2 = t1 + SW_SWING, t3 = t2 + SW_HOLD, t4 = t3 + SW_BACK;
+    if (t < t1) pose(this.startPose, this.windPose, smooth01(t / t1));
+    else if (t < t2 && own) {
+      const k = (t - t1) / SW_SWING, e = k * k * (3 - 2 * k);
+      const target = this.wind.clone().lerp(this.thru, e);
+      applyPose(g, poseOf(this.grip, target, this.len));
+      camera.updateMatrixWorld(); g.updateMatrixWorld(true);
+      const p = g.localToWorld(new THREE.Vector3(0, SW_LEN * 0.72, 0)), q = g.localToWorld(new THREE.Vector3(0, SW_LEN, 0));
+      this.trail.push(p); this.sides.push(q.sub(p));
+    } else {
+      if (!this.wave && t >= t2) this.launch(g);
+      if (t < t3) pose(this.thruPose);
+      else pose(this.thruPose, restPose(), smooth01(Math.min(1, (t - t3) / SW_BACK)));
+      if (this.trail.length) { this.trail.shift(); this.sides.shift(); if (this.trail.length) { this.trail.shift(); this.sides.shift(); } }
+    }
+    this.drawTrail();
+    const waveAlive = this.wave ? this.flyWave(dt) : true;
+    if (t > t4 && !waveAlive) {
+      for (const m of [this.trailMesh, this.wave && this.wave.mesh]) if (m) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); }
+      this.trailMesh = null;
+      if (own) { curSlash = null; if (!swordOn) g.visible = false; else applyPose(g, restPose()); }
+      return false;
+    }
+    return true;
+  }
+  drawTrail() {
+    // a band swept by the outer part of the blade, fading toward its tail
+    const m = this.trailMesh, pos = m.geometry.attributes.position.array, wv = m.geometry.attributes.w.array, n = Math.min(this.trail.length, 41);
+    for (let i = 0; i < n; i++) {
+      const p = this.trail[this.trail.length - n + i], sd = this.sides[this.sides.length - n + i];
+      pos[6 * i] = p.x; pos[6 * i + 1] = p.y; pos[6 * i + 2] = p.z;
+      pos[6 * i + 3] = p.x + sd.x; pos[6 * i + 4] = p.y + sd.y; pos[6 * i + 5] = p.z + sd.z;
+      wv[4 * i] = wv[4 * i + 2] = 0.12 + 0.88 * (i / Math.max(1, n - 1)); // tail fades, head stays
+    }
+    m.geometry.setDrawRange(0, Math.max(0, (n - 1) * 6));
+    m.geometry.attributes.position.needsUpdate = true; m.geometry.attributes.w.needsUpdate = true;
+  }
+  /** the sword lets go of a crescent wave: it starts at the blade and flies out along the cut plane */
+  launch(g) {
+    const far = this.plan.length ? this.plan[this.plan.length - 1].d : 500;
+    camera.updateMatrixWorld(); g.updateMatrixWorld(true);
+    const near = this.plan.length ? this.plan[0].d : 300;
+    const blade = g.localToWorld(new THREE.Vector3(0, SW_LEN * 0.6, 0));
+    const ang = this.da.angleTo(this.db);
+    // fast enough to reach the far end quickly, slow enough that it is on the cut line before the first hit
+    // the arc's directions on the cut plane, and where each starts (around the blade): fixed from here on
+    const mid = this.da.clone().applyAxisAngle(this.n, ang * 0.5), bdir = blade.sub(this.o).normalize(), N = 32;
+    const dEnd = [], dStart = [];
+    for (let i = 0; i <= N; i++) {
+      const d = this.da.clone().applyAxisAngle(this.n, ang * (-0.06 + 1.12 * i / N));
+      dEnd.push(d); dStart.push(d.clone().sub(mid).multiplyScalar(0.3).add(bdir));
+    }
+    this.wave = { mesh: stripMesh(N), r: 6, t: 0, v: clamp(Math.min(near / 0.2, far / 0.3), 300, 2600), rEnd: far + 80, dEnd, dStart };
+    FX.punch(1.6); FX.shake(0.18);
+    A.whoosh(null, 0.45);
+  }
+  flyWave(dt) {
+    const W = this.wave;
+    W.t += dt; W.r += W.v * dt;
+    // cut each building as the wave reaches it
+    while (this.plan.length && this.plan[0].d <= W.r) this.cut(this.plan.shift().b);
+    const fade = 1 - smooth01(clamp((W.r - (W.rEnd - 60)) / 120, 0, 1));
+    const m = W.mesh, pos = m.geometry.attributes.position.array, N = 32;
+    // on screen the wave leaves the blade small and grows onto the cut line while it flies into the scene:
+    // blend directions from the camera (not positions), so the screen path doesn't depend on the depth
+    const e = 1 - Math.pow(Math.max(0, 1 - W.t / 0.2), 3);
+    const width = 0.8 + 0.035 * W.r, d = new THREE.Vector3(), c = new THREE.Vector3();
+    for (let i = 0; i <= N; i++) {
+      const u = i / N, s = Math.sin(Math.PI * u);
+      d.copy(W.dStart[i]).lerp(W.dEnd[i], e).normalize();
+      c.copy(this.o).addScaledVector(d, W.r);
+      // crescent: the outer (leading) edge bulges more than the inner one, both meet at the tips
+      const outer = width * s, inner = width * 0.35 * s * s;
+      pos[6 * i] = c.x + this.n.x * inner; pos[6 * i + 1] = c.y + this.n.y * inner; pos[6 * i + 2] = c.z + this.n.z * inner;
+      pos[6 * i + 3] = c.x + this.n.x * outer; pos[6 * i + 4] = c.y + this.n.y * outer; pos[6 * i + 5] = c.z + this.n.z * outer;
+      if (i % 4 === 2 && Math.random() < 0.7) FX.spark(c.x, c.y, c.z, rand(-3, 3), rand(-1, 4), rand(-3, 3), rand(0.25, 0.5), 0.3, [0.8, 0.95, 1]);
+    }
+    m.geometry.attributes.position.needsUpdate = true;
+    m.material.uniforms.uA.value = fade;
+    return W.r < W.rEnd + 60;
+  }
+  cut(b) {
+    const res = S.slash(this.o, this.n, this.inside, this.db.clone().sub(this.da), b);
+    if (!res.length) return;
+    if (!this.hits++) { FX.hitstop(0.05); stats.slashes++; }
+    FX.shake(0.25, res[0].pts[0]);
+    for (const r of res) {
+      const step = Math.max(1, Math.floor(r.pts.length / 36));
+      for (let i = 0; i < r.pts.length; i += step) {
+        const c = r.pts[i];
+        for (let j = 0; j < 2; j++) FX.spark(c.x, c.y, c.z, rand(-10, 10), rand(2, 12), rand(-10, 10), rand(0.2, 0.45), 0.25, [1, 0.95, 0.8]);
+        if (Math.random() < 0.3) FX.dust(c.x, c.y, c.z, rand(-2, 2), rand(0, 2), rand(-2, 2), rand(1.5, 3), 1.5, 5, 0.4);
+        if (Math.random() < 0.25) FX.glow(c.x, c.y, c.z, 0.1, 2.5, 3, [1.6, 1.6, 1.6, 1]);
+      }
+      const c = r.pts[Math.floor(r.pts.length / 2)];
+      A.clang(c);
+      if (r.glass) { FX.glassBurst(c, Math.min(80, r.glass * 4), null, 8); A.glass(r.glass, c); }
+      if (r.severed) { A.crumble(1.5, c); if (ui.toast && r.b.target) ui.toast('싹둑! ' + r.b.name); }
+    }
+  }
+}
+/** a slash from screen point (x0, y0) to (x1, y1), in CSS pixels */
+export function slash(x0, y0, x1, y1) {
+  const a = new THREE.Vector2(x0 / innerWidth * 2 - 1, 1 - y0 / innerHeight * 2), b = new THREE.Vector2(x1 / innerWidth * 2 - 1, 1 - y1 / innerHeight * 2);
+  if (a.distanceTo(b) < 0.02) return null;
+  if (ui.onAttack) ui.onAttack('sword');
+  const s = new Slash(a, b);
+  actions.push(s);
+  return s;
+}
+
+// ---------------------------------------------------------------- shader warm-up
+// The first time anything is drawn with a new shader, the frame stalls while it is compiled: the scene's
+// own shaders took seconds on the first frame, and each weapon or effect stalled again on first use. On
+// Windows (ANGLE) and many phone GPUs part of that work happens only at the first real draw, even when
+// the program was compiled ahead. And materials disposed after each use (beams, sword waves and trails,
+// the fireball, shockwave rings) take their program with them, so the next shot would compile it again.
+// So before the game loop starts: compile everything (the scene plus one of every weapon, effect and
+// loose prop) in parallel on the driver's threads, then draw it all once into a tiny off-screen target
+// set up like the real one, and keep those materials so later copies find their shader ready.
+const warmKeep = [];
+export function warmup(renderer) {
+  const g = new THREE.Group();
+  const sphere = new THREE.SphereGeometry(1, 8, 6);
+  const take = (m) => { scene.remove(m); g.add(m); return m; };
+  g.add(hammerGeo.clone(), bombProto.clone(), satProto.clone(), missileProto.clone(), nukeProto.clone());
+  take(makeTrail(0xffffff));
+  const mt = take(makeTrail(0xffffff)); mt.material = meteorTrailMat();
+  g.add(new THREE.Mesh(beamGeo, beamMat([1, 1, 1], [1, 1, 1], 1)), new THREE.Mesh(new THREE.PlaneGeometry(), pathMat));
+  g.add(new THREE.Mesh(meteorGeo, meteorMat), new THREE.Mesh(sphere, plasmaShellMat), new THREE.Mesh(sphere, fireballMat));
+  g.add(new THREE.Mesh(tracerGeo, tracerMat));
+  g.add(...FX.warmObjects());
+  // props knocked loose fly as plain meshes (not instanced)
+  for (const set of props.sets) if (!set.vanish) { const m = new THREE.Mesh(set.geo, set.mat); m.castShadow = m.receiveShadow = true; g.add(m); }
+  take(stripMesh(2));
+  // tiny, at the centre of the view: inside the camera and shadow frusta, so it is drawn, but invisible
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = o.castShadow || o.material.isMeshStandardMaterial; o.frustumCulled = false; } });
+  g.position.copy(controls.target); g.scale.setScalar(1e-3); scene.add(g);
+  // one particle of each kind and the hand-held rigs
+  const c = controls.target;
+  FX.spark(c.x, c.y, c.z, 0, 0, 0, 0.1); FX.fire(c.x, c.y, c.z, 0, 0, 0, 0.1, 1, 1); FX.smoke(c.x, c.y, c.z, 0, 0, 0, 0.1, 1, 1);
+  FX.dust(c.x, c.y, c.z, 0, 0, 0, 0.1, 1, 1); FX.glow(c.x, c.y, c.z, 0.1, 1, 1, [1, 1, 1, 1]); FX.ember(c.x, c.y, c.z, 0, 0, 0, 0.1);
+  FX.plasmaStreak(c.x, c.y, c.z, 0, 0, 0, 0.1, 1, [1, 1, 1]); FX.glassBurst(c, 1); FX.chipBurst(c, 1);
+  FX.update(1e-3); // particle pools set their draw counts in update
+  const rigs = [gunRig(), swordRig()], vis = rigs.map((r) => r.visible);
+  rigs.forEach((r) => { r.visible = true; });
+  // shaders differ by target (the post-processing buffer: linear output, no tone mapping): use one like it
+  const ref = composer ? composer.renderTarget1 : null;
+  const rt = new THREE.WebGLRenderTarget(16, 16, ref ? { type: ref.texture.type, colorSpace: ref.texture.colorSpace, samples: ref.samples } : {});
+  const on = (fn) => { const prev = renderer.getRenderTarget(); renderer.setRenderTarget(rt); const r = fn(); renderer.setRenderTarget(prev); return r; };
+  const finish = () => {
+    // twice: three builds the shadow pass's shaders with the lights of the previous render of the
+    // scene, so the very first render makes variants no later frame uses
+    on(() => { for (let i = 0; i < 2; i++) { renderer.shadowMap.needsUpdate = true; renderer.render(scene, camera); } });
+    rt.dispose();
+    rigs.forEach((r, i) => { r.visible = vis[i]; });
+    scene.remove(g); warmKeep.push(g);
+    FX.reset();
+  };
+  return on(() => renderer.compileAsync(scene, camera)).then(finish, finish);
+}
+
 // ---------------------------------------------------------------- dispatcher
 export const TOOLS = {
   hammer: { name: '망치', hint: '클릭한 곳을 거대한 망치로 내려칩니다 · 조각을 다시 치면 더 잘게 부서집니다' },
@@ -1212,6 +1404,7 @@ export const TOOLS = {
   missile: { name: '미사일', hint: '클릭 한 번에 정확히 3발 · 목표 주변에 차례로 착탄' },
   mg: { name: '기관총', hint: '누르고 있는 동안 연사 · 끌면서 조준 (회전: 오른쪽 끌기) · 유리창과 외벽이 조금씩 뜯겨 나갑니다' },
   nuke: { name: '핵폭탄', hint: '클릭한 곳 상공에서 터지는 핵폭탄 · 반경 230 m 일대가 통째로 날아가고 버섯구름이 솟습니다' },
+  sword: { name: '칼', hint: '화면을 그어 그 선대로 건물을 벱니다 · 건물을 끝까지 가로질러 베면 윗부분이 떨어집니다 (회전: 오른쪽 끌기)' },
 };
 export function fire(tool, hit, pickNear) {
   if (!hit) return null;
@@ -1241,6 +1434,7 @@ export function fireLaser(path) {
 export function update(dt) {
   for (let i = actions.length - 1; i >= 0; i--) if (!actions[i].update(dt)) actions.splice(i, 1);
   if (rig && rig.visible && !actions.some((a) => a instanceof Gun)) rigTick(dt, null, false);
+  if (srig && srig.visible && !actions.some((a) => a instanceof Slash)) restSword(srig);
 }
 export function reset() {
   for (const a of actions) {
@@ -1251,6 +1445,7 @@ export function reset() {
     if (a.light) a.light.update = null;
     if (a.missiles) for (const m of a.missiles) { scene.remove(m.obj); if (m.sfx) m.sfx.stop(0.05); }
     if (a.rounds) for (const r of a.rounds) scene.remove(r.mesh);
+    if (a.wave) scene.remove(a.wave.mesh);
   }
   actions.length = 0;
   meteorRemnants();
