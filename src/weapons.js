@@ -1342,8 +1342,11 @@ export function slash(x0, y0, x1, y1) {
 // loose prop) in parallel on the driver's threads, then draw it all once into a tiny off-screen target
 // set up like the real one, and keep those materials so later copies find their shader ready.
 const warmKeep = [];
+/** objects from other modules (fight mode's thrown things) to compile with the weapons */
+export const EXTRA_WARM = [];
 export function warmup(renderer) {
   const g = new THREE.Group();
+  g.add(...EXTRA_WARM);
   const sphere = new THREE.SphereGeometry(1, 8, 6);
   const take = (m) => { scene.remove(m); g.add(m); return m; };
   g.add(hammerGeo.clone(), bombProto.clone(), satProto.clone(), missileProto.clone(), nukeProto.clone());

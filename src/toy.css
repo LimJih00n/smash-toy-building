@@ -39,7 +39,7 @@ html.toy #ledger div{font-size:12px;color:var(--g800);background:rgba(255,255,25
 html.toy #ledger div b{color:var(--blue)}
 html.toy #toast{top:calc(var(--top) + 66px);font:700 14px var(--font);padding:9px 16px;border-radius:999px;background:rgba(25,31,40,.86);color:#fff;max-width:calc(100vw - 32px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 html.toy #embPop{top:calc(var(--top) + 112px)}
-html.toy #hint{left:50%;right:auto;transform:translateX(-50%);bottom:calc(var(--bot) + 76px);white-space:nowrap;font:700 13px var(--font);line-height:1.2;padding:9px 16px;border-radius:999px;background:rgba(25,31,40,.86);color:#fff;box-shadow:none;transition:opacity .4s}
+html.toy #hint{left:50%;right:auto;transform:translateX(-50%);bottom:calc(var(--bot) + 76px);white-space:normal;width:max-content;max-width:calc(100vw - 32px);box-sizing:border-box;text-align:center;font:700 13px var(--font);line-height:1.2;padding:9px 16px;border-radius:999px;background:rgba(25,31,40,.86);color:#fff;box-shadow:none;transition:opacity .4s}
 
 /* ---- weapon: one button at the thumb; the whole set opens in a picker sheet (grows a row per 4 weapons) */
 #toyWeapon{position:fixed;z-index:6;left:50%;transform:translateX(-50%);bottom:var(--bot);display:flex;align-items:center;gap:10px;min-width:184px;height:64px;box-sizing:border-box;padding:0 14px 0 10px;border:0;border-radius:22px;background:#fff;color:var(--g900);box-shadow:var(--shadow);font-family:var(--font);cursor:pointer}
@@ -56,6 +56,33 @@ html.toy .tool svg{width:30px;height:30px;flex:0 0 30px}
 html.toy .tool .desc{font-size:11px;font-weight:600;line-height:1.3;color:var(--g500);text-align:center;white-space:normal}
 html.toy .tool.on{background:var(--blue);color:#fff;box-shadow:0 6px 16px rgba(49,130,246,.35)}
 html.toy .tool.on .desc{color:rgba(255,255,255,.85)}
+
+/* ---- fight mode (experimental): hearts, joystick, hurt flash; the weapon button moves right */
+#fHp,#fJoy{display:none}
+html.fight #toyWeapon{left:auto;right:12px;transform:none;min-width:0}
+html.fight #toyWeapon:active{transform:scale(.97)}
+html.fight #fJoy{display:block;position:fixed;z-index:6;left:14px;bottom:calc(var(--bot) - 2px);width:128px;height:128px;border-radius:50%;background:rgba(255,255,255,.62);box-shadow:var(--shadow);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);touch-action:none;cursor:pointer}
+#fJoy i{position:absolute;left:50%;top:50%;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;background:var(--blue);box-shadow:0 4px 14px rgba(49,130,246,.45);pointer-events:none}
+#fJoy .ar{position:absolute;font-size:11px;line-height:1;color:var(--g500);pointer-events:none}
+#fJoy .l{left:11px;top:50%;margin-top:-5px}#fJoy .r{right:11px;top:50%;margin-top:-5px}
+#fJoy .u{top:10px;left:50%;margin-left:-5px}#fJoy .d{bottom:10px;left:50%;margin-left:-5px}
+html.fight #fHp{display:flex;position:fixed;z-index:6;left:12px;top:calc(var(--top) + 74px);gap:2px;padding:6px 9px;border-radius:999px;background:rgba(255,255,255,.88);box-shadow:var(--shadow);pointer-events:none}
+#fHp b{display:block;width:19px;height:19px}
+#fHp svg{display:block;width:100%;height:100%;fill:var(--g200)}
+#fHp b.on svg{fill:#ff4d5e}
+#fHp.blink{animation:fBlink .18s steps(2) infinite}
+@keyframes fBlink{50%{opacity:.3}}
+#fHurt{position:fixed;inset:0;z-index:5;pointer-events:none;opacity:0;background:radial-gradient(ellipse at center,rgba(255,50,60,0) 42%,rgba(255,40,60,.62) 100%)}
+html.fight #dock .tool[data-tool="nuke"]{display:none}
+#toyHome .mode{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;padding:10px 14px;border-radius:16px;background:#fff;box-shadow:0 1px 3px rgba(0,27,55,.06);cursor:pointer}
+#toyHome .mode .mt{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;min-width:0}
+#toyHome .mode b{font-size:15px;font-weight:800}
+#toyHome .mode em{font-style:normal;font-size:11px;font-weight:800;color:var(--blue);background:rgba(49,130,246,.12);padding:2px 6px;border-radius:6px}
+#toyHome .mode small{flex-basis:100%;font-size:12px;font-weight:600;color:var(--g500)}
+#toyHome .sw{appearance:none;-webkit-appearance:none;flex:0 0 50px;width:50px;height:30px;margin:0;border-radius:999px;background:var(--g200);position:relative;cursor:pointer;transition:background .2s}
+#toyHome .sw::after{content:'';position:absolute;left:3px;top:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.2);transition:transform .2s}
+#toyHome .sw:checked{background:var(--blue)}
+#toyHome .sw:checked::after{transform:translateX(20px)}
 
 /* ---- pause menu: a bottom sheet */
 #toyMenu,#toyResult,#toyPick{position:fixed;inset:0;z-index:25;display:none;align-items:flex-end;justify-content:center;background:rgba(0,12,30,.36)}
@@ -168,7 +195,8 @@ html.toy #startBtn:disabled{background:var(--g300,#d1d6db);opacity:1}
   #toyHome .tt small{display:none}
   #toyHome .tt h1{font-size:22px}
   #toyHome .bar{margin-bottom:6px}
-  #toyHome .find{margin-bottom:6px}#toyHome .q,#toyHome .rnd{height:38px}
+  #toyHome .find{margin-bottom:6px}#toyHome .mode{padding:6px 12px;margin-bottom:4px}#toyHome .mode small{display:none}
+  html.fight #fJoy{width:108px;height:108px}#toyHome .q,#toyHome .rnd{height:38px}
   #toyHome .links{margin-bottom:4px}
   #toyHome .sc{padding:8px}
   #toyHome .th{flex-basis:44px;height:44px}

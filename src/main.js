@@ -16,6 +16,7 @@ import * as Rank from './rank.js';
 import { initLanding, openSheet } from './landing.js';
 import { initToyUI } from './toyui.js';
 import * as Emblem from './emblem.js';
+import * as Fight from './fight.js';
 import { clamp } from './util.js';
 initLanding({ MAPS: world.MAPS, MAP: world.MAP, won: Score.won }); // first-screen sheets work while the map loads
 
@@ -142,11 +143,13 @@ const touchHint = (s) => s.replace(/클릭 한 번에/g, '탭 한 번에').repla
 let TOY = null; // the UI around the game (src/toyui.js), set up once the rest of the page exists
 let paused = false; // the toy UI's pause menu is open: the world stands still
 function setTool(t) {
+  if (t === 'nuke' && Fight.state.on) { toast('반격 모드에서는 핵폭탄을 쓸 수 없어요'); return; }
   tool = t;
   W.setGunVisible(t === 'mg');
   W.setSwordVisible(t === 'sword');
   for (const b of toolBtns) b.classList.toggle('on', b.dataset.tool === t);
-  $('hint').textContent = COARSE ? touchHint(W.TOOLS[t].hint) : W.TOOLS[t].hint;
+  const ht = COARSE ? touchHint(W.TOOLS[t].hint) : W.TOOLS[t].hint;
+  $('hint').textContent = Fight.state.on ? ht.replace(/ · (두 손가락|오른쪽 끌기): 회전/, '') : ht; // fight mode: the joystick moves
   $('hint').style.opacity = 1;
   if (TOY) TOY.toolChanged(t);
   if (t === 'laser' || t === 'mg' || t === 'sword') {
@@ -167,7 +170,7 @@ W.ui.toast = toast; W.ui.banner = banner;
 let lastAttack = '대기 중';
 W.ui.onAttack = (t) => {
   lastAttack = (W.TOOLS[t] ? W.TOOLS[t].name : t) + ' 사용'; $('hint').style.opacity = 0.0; Score.onAttack(t);
-  if (!run.done) { run.on = true; run.shots++; run.weapons.add(t); if (t === 'nuke') { run.nuke = true; $('tmTag').textContent = '☢ 핵 사용'; } }
+  if (!run.done && !run.failed) { run.on = true; run.shots++; run.weapons.add(t); if (t === 'nuke') { run.nuke = true; $('tmTag').textContent = '☢ 핵 사용'; } }
 };
 
 // ---------------------------------------------------------------- time attack
@@ -224,14 +227,24 @@ function updateMarkers(recalc) {
   }
 }
 function clearMarkers() { markerBox.textContent = ''; markers.clear(); mkMain = null; mkList = null; }
-const run = { on: false, t: 0, done: false, nuke: false, shots: 0, lastRatio: 0, weapons: new Set() };
+const run = { on: false, t: 0, done: false, failed: false, fight: false, nuke: false, shots: 0, lastRatio: 0, weapons: new Set() };
+const veil = $('veil');
+// fight mode: the clock runs from the first throw; a knockout ends the run (not a clear)
+Fight.hooks.onStart = () => { if (!run.on && !run.done) { run.on = true; run.fight = true; } banner('건물의 반격!', '빨간 ! 가 뜨면 피하세요'); };
+Fight.hooks.onHit = (what, hp) => toast(what + '에 맞았어요 · ❤ ' + hp);
+Fight.hooks.onDead = () => {
+  run.on = false; run.failed = true;
+  reportHits(); Rank.flushHits();
+  banner('쓰러졌어요', fmtT(run.t) + ' 버팀');
+  setTimeout(() => showResult(), 2200);
+};
 const qs0 = new URLSearchParams(location.search);
 const vsMs = qs0.get('map') === world.MAP.id ? +qs0.get('vs') || 0 : 0; // challenge link: a friend's time to beat (same map only)
 const fmtT = (sec) => { const m = Math.floor(sec / 60), s = sec - m * 60; return String(m).padStart(2, '0') + ':' + s.toFixed(1).padStart(4, '0'); };
 { const n = S.buildings.filter((b) => b.target).length; $('pctLbl').textContent = n ? '목표 건물 파괴율' : '파괴율'; }
 if (vsMs) $('tmVs').textContent = '도전: ' + fmtT(vsMs / 1000);
 function runReset() {
-  Object.assign(run, { on: false, t: 0, done: false, nuke: false, shots: 0, lastRatio: 0, submitted: false, weapons: new Set(), newEmb: null });
+  Object.assign(run, { on: false, t: 0, done: false, failed: false, fight: Fight.state.on, nuke: false, shots: 0, lastRatio: 0, submitted: false, weapons: new Set(), newEmb: null });
   $('tm').textContent = fmtT(0); $('tmTag').textContent = ''; $('timer').classList.remove('done');
   Replay.reset();
 }
@@ -254,8 +267,9 @@ function runComplete() {
   reportHits(!run.nuke); Rank.flushHits();
   run.done = true; run.on = false;
   $('timer').classList.add('done'); $('tm').textContent = fmtT(run.t);
-  banner('완파!', fmtT(run.t) + (run.nuke ? ' · 핵 사용' : ''));
-  run.newEmb = Emblem.onClear({ map: world.MAP.id, sec: run.t, shots: run.shots, nuke: run.nuke, weapon: singleWeapon() }, world.MAPS);
+  banner('완파!', fmtT(run.t) + (run.nuke ? ' · 핵 사용' : '') + (run.fight ? ' · ❤ ' + Fight.state.hp : ''));
+  // fight-mode runs don't count for the time records and emblems
+  run.newEmb = run.fight ? null : Emblem.onClear({ map: world.MAP.id, sec: run.t, shots: run.shots, nuke: run.nuke, weapon: singleWeapon() }, world.MAPS);
   setTimeout(() => embPop(run.newEmb), 2600);
   Replay.trigger(4.5, true);
   if (TOY) TOY.onComplete();
@@ -422,6 +436,7 @@ function resetWorld() {
   world.build();
   props.reset();
   Score.reset(); lastLostVol = 0;
+  Fight.reset();
   runReset(); clearMarkers();
   FX.cam.trauma = 0; FX.cam.hitstop = 0; FX.cam.slowmo = 1;
   exposure.dip = 0; exposure.boost = 0;
@@ -438,6 +453,7 @@ function simulate(realDt) {
   dt *= FX.cam.slowmo;
   const t0 = performance.now();
   W.update(dt);
+  Fight.update(dt, veil.classList.contains('hide') && !document.hidden && !run.done && !run.failed);
   const t1 = performance.now();
   if (dt > 1e-4) P.step(dt);
   const t2 = performance.now();
@@ -462,6 +478,7 @@ addEventListener('keyup', (e) => moveKeys.delete(e.key.toLowerCase()));
 addEventListener('blur', () => moveKeys.clear());
 const _fw = new THREE.Vector3(), _rt = new THREE.Vector3(), _mv = new THREE.Vector3();
 function moveCamera(dt) {
+  if (Fight.state.on) { Fight.move(dt, moveKeys); return; } // fight mode: around the building at a set distance
   let f = 0, r = 0, u = 0;
   if (moveKeys.has('w') || moveKeys.has('arrowup')) f += 1;
   if (moveKeys.has('s') || moveKeys.has('arrowdown')) f -= 1;
@@ -617,12 +634,14 @@ const singleWeapon = () => (run.weapons.size === 1 ? [...run.weapons][0] : null)
 const BOARD_NAME = { all: '종합', mg: '기관총', hammer: '망치', bomb: '폭탄', missile: '미사일', laser: '레이저', meteor: '운석', sword: '칼', hits: '🏢 회사 파괴 랭킹' };
 function shareText() {
   const url = new URL(location.href); url.search = ''; url.searchParams.set('map', world.MAP.id);
-  if (run.done && !run.nuke) url.searchParams.set('vs', Math.round(run.t * 1000));
+  if (run.fight) url.searchParams.set('mode', 'fight');
+  else if (run.done && !run.nuke) url.searchParams.set('vs', Math.round(run.t * 1000));
   return [
-    '회사부수기 · ' + world.MAP.title,
-    (run.done ? '💥 완파 ⏱ ' + fmtT(run.t) : '💥 파괴율 ' + $('pct').textContent + ' ⏱ ' + fmtT(run.t)) + (singleWeapon() && BOARD_NAME[singleWeapon()] ? ' · ' + BOARD_NAME[singleWeapon()] + '만' : '') + ' · 공격 ' + run.shots + '회' + (run.nuke ? ' · ☢' : ''),
+    '회사부수기 · ' + world.MAP.title + (run.fight ? ' · ⚔️ 반격 모드' : ''),
+    ...(run.fight ? [(run.failed ? '😵 쓰러짐' : '💥 완파') + ' ⏱ ' + fmtT(run.t) + ' · ❤ ' + Fight.state.hp + ' / ' + Fight.state.max + ' · 피한 공격 ' + Fight.state.dodged + '개'] : []),
+    ...(run.fight ? [] : [(run.done ? '💥 완파 ⏱ ' + fmtT(run.t) : '💥 파괴율 ' + $('pct').textContent + ' ⏱ ' + fmtT(run.t)) + (singleWeapon() && BOARD_NAME[singleWeapon()] ? ' · ' + BOARD_NAME[singleWeapon()] + '만' : '') + ' · 공격 ' + run.shots + '회' + (run.nuke ? ' · ☢' : '')]),
     '💰 피해액 ' + Score.won(Score.state.score) + ' · 직급 ' + Score.rankInfo().id,
-    (run.done && !run.nuke ? '👉 이 기록 깨 보기: ' : '👉 ') + url.toString(),
+    (run.done && !run.nuke && !run.fight ? '👉 이 기록 깨 보기: ' : '👉 ') + url.toString(),
   ].join('\n');
 }
 function showResult() { return TOY.showResult(); }
@@ -638,10 +657,11 @@ if (vsMs) toast('친구 기록 ' + fmtT(vsMs / 1000) + ' — 이겨 보세요!')
 
 // test / debugging hooks (deterministic stepping when ?test=1)
 TOY = initToyUI({ world, Score, Rank, Emblem, W, Replay, run, fmtT, toast, resetWorld, shareText, COARSE,
-  setPaused: (v) => { paused = v; }, isMuted: () => A.isMuted(), cycleView, toggleSound, openEmblems, openVeil, openSheet, saveClip });
+  setPaused: (v) => { paused = v; }, isMuted: () => A.isMuted(), cycleView, toggleSound, openEmblems, openVeil, openSheet, saveClip, Fight,
+  setFight: (v) => { const started = run.on || run.done || run.failed; Fight.setOn(v); if (v && tool === 'nuke') setTool('hammer'); if (started) resetWorld(); else runReset(); setTool(tool); } });
 setTool(tool); // again, now with the toy UI's short hints
 window.SMASH = {
-  THREE, scene, camera, controls, renderer, QUALITY, DRS, terrain, B, P, S, SG, props, FX, W, setView, pickScreen, pickRay,
+  THREE, scene, camera, controls, renderer, QUALITY, DRS, terrain, B, P, S, SG, props, FX, W, Fight, setView, pickScreen, pickRay,
   setFov(f) { baseFov = f; },
   setTool, resetWorld, VIEWS, Score, Emblem, renderEmblems, run, Replay, Rank, showResult, shareText,
   advance(sec, step = 1 / 60) { const n = Math.round(sec / step); for (let i = 0; i < n; i++) simulate(step); },

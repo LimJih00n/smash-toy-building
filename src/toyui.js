@@ -17,12 +17,14 @@ const TOWER = '<svg viewBox="-12 -12 24 24"><path d="M-9 9V-5h6V9M-2 9V-11h7V9M6
 const MEDAL = { 1: ['동', '#c98a5c'], 2: ['은', '#9aa5b1'], 3: ['금', '#e2b33c'] };
 
 export function initToyUI(api) {
-  const { world, Score, Rank, Emblem, W, Replay, run, fmtT, toast, resetWorld, setPaused, shareText, COARSE, isMuted, cycleView, toggleSound, openEmblems, openVeil, openSheet, saveClip } = api;
+  const { world, Score, Rank, Emblem, W, Replay, run, fmtT, toast, resetWorld, setPaused, shareText, COARSE, isMuted, cycleView, toggleSound, openEmblems, openVeil, openSheet, saveClip, Fight, setFight } = api;
   const tap = COARSE ? '탭' : '클릭';
+  // the drag weapons use one finger (left button) themselves: the view turns with two fingers (right drag)
+  const turn = COARSE ? '두 손가락: 회전' : '오른쪽 끌기: 회전';
   // one line per weapon, shown for a moment when it is picked
   const HINT = {
-    mg: '누르고 있기: 연사 · 끌며 조준', hammer: `${tap}: 망치로 내려치기`, bomb: `${tap}: 폭탄 던지기`, missile: `${tap}: 미사일 3발`,
-    laser: '그어서 레이저로 자르기', meteor: `${tap}: 운석 떨어뜨리기`, nuke: `${tap}: 핵폭탄 (기록에서 빠져요)`, sword: `그어서 베기 · ${tap}: 연속 베기`,
+    mg: `누르고 있기: 연사 · 끌며 조준 · ${turn}`, hammer: `${tap}: 망치로 내려치기`, bomb: `${tap}: 폭탄 던지기`, missile: `${tap}: 미사일 3발`,
+    laser: `그어서 레이저로 자르기 · ${turn}`, meteor: `${tap}: 운석 떨어뜨리기`, nuke: `${tap}: 핵폭탄 (기록에서 빠져요)`, sword: `그어서 베기 · ${tap}: 연속 베기 · ${turn}`,
   };
   for (const [k, v] of Object.entries(HINT)) if (W.TOOLS[k]) W.TOOLS[k].hint = v;
 
@@ -114,7 +116,20 @@ export function initToyUI(api) {
   for (const [label, fn] of [['조작법', () => openSheet('howto')], ['회사 파괴 랭킹', () => openSheet('rank')], ['엠블럼', openEmblems]]) {
     const b = el('button', null, label); b.addEventListener('click', (e) => { e.stopPropagation(); fn(); }); links.appendChild(b);
   }
-  foot.append(links, $('startBtn')); // the start button keeps its loading state and handler
+  // fight mode (experimental): the buildings throw things back; it sticks to the address so stage changes keep it
+  const mode = el('label', 'mode');
+  const mTx = el('span', 'mt'); mTx.append(el('b', null, '⚔️ 반격 모드'), el('em', null, '실험'), el('small', null, '건물이 던지는 걸 피하면서 부수기'));
+  const mSw = el('input'); mSw.type = 'checkbox'; mSw.className = 'sw'; mSw.checked = Fight.state.on;
+  mode.append(mTx, mSw);
+  mSw.addEventListener('change', () => {
+    const qs = new URLSearchParams(location.search);
+    if (mSw.checked) qs.set('mode', 'fight'); else qs.delete('mode');
+    history.replaceState(null, '', location.pathname + (qs.toString() ? '?' + qs : ''));
+    setFight(mSw.checked);
+    toast(mSw.checked ? '반격 모드: 조이스틱으로 피하세요' : '일반 모드');
+  });
+  mode.addEventListener('click', (e) => e.stopPropagation());
+  foot.append(mode, links, $('startBtn')); // the start button keeps its loading state and handler
   home.append(hh, bar, find, cards, foot);
   $('veil').appendChild(home);
 
@@ -240,22 +255,23 @@ export function initToyUI(api) {
   /** a finished run (no nuke): keep the best time on this device, remember whether it is a new one */
   function onComplete() {
     prevBest = Rank.localBest(world.MAP.id);
-    newBest = !run.nuke && (!prevBest || run.t * 1000 < prevBest.ms);
-    if (!run.nuke) Rank.saveLocalBest({ map: world.MAP.id, ms: run.t * 1000, dmg: Score.state.score, shots: run.shots });
+    newBest = !run.nuke && !run.fight && (!prevBest || run.t * 1000 < prevBest.ms);
+    if (!run.nuke && !run.fight) Rank.saveLocalBest({ map: world.MAP.id, ms: run.t * 1000, dmg: Score.state.score, shots: run.shots });
   }
   async function showResult() {
     const done = run.done;
-    rStage.textContent = world.MAP.title;
-    rTitle.textContent = done ? (run.nuke ? '완파! (핵 사용)' : '완파!') : '지금까지 기록';
+    rStage.textContent = world.MAP.title + (run.fight ? ' · ⚔️ 반격 모드' : '');
+    rTitle.textContent = run.failed ? '쓰러졌어요' : done ? (run.nuke ? '완파! (핵 사용)' : '완파!') : '지금까지 기록';
     rTime.textContent = fmtT(run.t);
-    const tier = done && !run.nuke ? (run.t <= Emblem.LIMIT.gold ? 3 : run.t <= Emblem.LIMIT.silver ? 2 : 1) : 0;
+    const tier = done && !run.nuke && !run.fight ? (run.t <= Emblem.LIMIT.gold ? 3 : run.t <= Emblem.LIMIT.silver ? 2 : 1) : 0;
     rMedal.style.display = tier ? '' : 'none';
     if (tier) { rMedal.textContent = MEDAL[tier][0] + '메달'; rMedal.style.setProperty('--c', MEDAL[tier][1]); }
     rNew.style.display = done && newBest ? '' : 'none';
     sDmg.textContent = Score.won(Score.state.score);
     sRank.textContent = Score.rankInfo().id;
     const bt = Rank.localBest(world.MAP.id);
-    sBest.textContent = bt ? fmtT(bt.ms / 1000) : '—';
+    sBest.previousSibling.textContent = run.failed ? '피한 공격' : run.fight ? '남은 체력' : '내 최고 기록';
+    sBest.textContent = run.failed ? Fight.state.dodged + '개' : run.fight ? `❤ ${Fight.state.hp} / ${Fight.state.max}` : bt ? fmtT(bt.ms / 1000) : '—';
     hlV.textContent = '…'; hlS.textContent = '이번 판 +' + Score.won(Score.state.score);
     paintClip();
     res.classList.add('show');
