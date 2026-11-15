@@ -7,6 +7,12 @@
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const svg = (s) => { const t = document.createElement('template'); t.innerHTML = s.trim(); return t.content.firstChild; };
+const SEARCH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L20 20"/></svg>';
+const DICE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><circle cx="8.5" cy="8.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="15.5" cy="15.5" r="1.6" fill="currentColor" stroke="none"/></svg>';
+// search: Korean initials ('ㅅㅅ' finds 삼성) as well as plain text, spaces ignored
+const CHO = 'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ';
+const initials = (s) => s.replace(/[가-힣]/g, (c) => CHO[Math.floor((c.charCodeAt(0) - 0xac00) / 588)]);
+const squash = (s) => s.toLowerCase().replace(/\s+/g, '');
 const TOWER = '<svg viewBox="-12 -12 24 24"><path d="M-9 9V-5h6V9M-2 9V-11h7V9M6 9V-2h4V9" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
 const MEDAL = { 1: ['동', '#c98a5c'], 2: ['은', '#9aa5b1'], 3: ['금', '#e2b33c'] };
 
@@ -90,10 +96,18 @@ export function initToyUI(api) {
   const brand = el('div', 'tt'); brand.append(el('small', null, '미니어처 건물 부수기'), el('h1', null, '회사부수기'));
   const best = el('div', 'best'); best.append(el('small', null, '최고 피해액'), el('b', null, Score.won(Score.state.best)));
   hh.append(brand, best);
-  const bar = el('div', 'bar'); bar.appendChild(el('h2', null, '스테이지'));
+  const bar = el('div', 'bar');
+  const count = el('span', 'n'); const bh = el('h2', null, '스테이지 '); bh.appendChild(count); bar.appendChild(bh);
   const seg = el('div', 'seg');
   const sortRec = el('button', 'on', '추천순'), sortMost = el('button', null, '많이 부서진 순');
   seg.append(sortRec, sortMost); bar.appendChild(seg);
+  // find a stage by name, or let the dice pick one
+  const find = el('div', 'find');
+  const qBox = el('label', 'q'), q = el('input');
+  q.type = 'search'; q.placeholder = '이름·지역으로 찾기'; q.enterKeyHint = 'search'; q.autocomplete = 'off'; q.spellcheck = false;
+  qBox.append(svg(SEARCH), q);
+  const rnd = el('button', 'rnd'); rnd.append(svg(DICE), document.createTextNode('랜덤'));
+  find.append(qBox, rnd);
   const cards = el('div', 'cards');
   const foot = el('div', 'foot');
   const links = el('div', 'links');
@@ -101,19 +115,36 @@ export function initToyUI(api) {
     const b = el('button', null, label); b.addEventListener('click', (e) => { e.stopPropagation(); fn(); }); links.appendChild(b);
   }
   foot.append(links, $('startBtn')); // the start button keeps its loading state and handler
-  home.append(hh, bar, cards, foot);
+  home.append(hh, bar, find, cards, foot);
   $('veil').appendChild(home);
 
   const hue = (id) => { let h = 0; for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 360; };
-  let hits = {}, sort = 'rec';
+  let hits = {}, sort = 'rec', query = '';
+  // what a search looks at: the stage's name first, then its areas, keywords and the companies nearby;
+  // initials ('ㅅㅅ') only match the name
+  const hay = new Map(world.MAPS.map((m) => {
+    const name = squash([m.title, m.short].filter(Boolean).join(' '));
+    return [m.id, { name, all: squash([m.title, m.short, m.sub, m.kw, ...(m.near || [])].filter(Boolean).join(' ')), ini: initials(name) }];
+  }));
+  /** 0: the name starts with it, 1: the name has it, 2: something else about the stage has it, -1: no match */
+  const rank = (m) => {
+    if (!query) return 0;
+    const h = hay.get(m.id);
+    if (/^[ㄱ-ㅎ]+$/.test(query)) return h.ini.startsWith(query) ? 0 : h.ini.includes(query) ? 1 : -1;
+    return h.name.startsWith(query) ? 0 : h.name.includes(query) ? 1 : h.all.includes(query) ? 2 : -1;
+  };
+  const matches = (m) => rank(m) >= 0;
   const goMap = (id) => { const qs = new URLSearchParams(location.search); qs.set('map', id); qs.set('go', '1'); location.search = qs.toString(); };
   function renderCards() {
     const own = Emblem.owned();
-    const list = [...world.MAPS];
+    const list = world.MAPS.filter(matches);
     if (sort === 'most') list.sort((a, b) => (hits[b.id] || 0) - (hits[a.id] || 0));
+    else if (query) list.sort((a, b) => rank(a) - rank(b)); // best matches first (stable: the usual order within)
     cards.textContent = '';
+    count.textContent = query ? `${list.length} / ${world.MAPS.length}` : String(world.MAPS.length);
+    if (!list.length) cards.appendChild(el('div', 'empty', `'${q.value.trim()}'에 맞는 스테이지가 없어요`));
     for (const m of list) {
-      const b = el('button', 'sc' + (m.id === world.MAP.id ? ' on' : ''));
+      const b = el('button', 'sc' + (m.id === world.MAP.id ? ' on' : '')); b.dataset.id = m.id;
       const th = el('span', 'th'); th.style.setProperty('--h', hue(m.id)); th.appendChild(svg(TOWER));
       const tx = el('span', 'tx');
       tx.append(el('b', null, m.title), el('small', null, m.sub || ''));
@@ -133,6 +164,23 @@ export function initToyUI(api) {
   const setSort = (s) => { sort = s; sortRec.classList.toggle('on', s === 'rec'); sortMost.classList.toggle('on', s === 'most'); renderCards(); };
   sortRec.addEventListener('click', (e) => { e.stopPropagation(); setSort('rec'); });
   sortMost.addEventListener('click', (e) => { e.stopPropagation(); setSort('most'); });
+  q.addEventListener('input', () => { query = squash(q.value); renderCards(); cards.scrollTop = 0; });
+  q.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') q.blur(); if (e.key === 'Escape') { q.value = ''; query = ''; renderCards(); q.blur(); } });
+  // the dice: any stage but this one (among the search results when there is a search), shown, then loaded
+  rnd.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (rnd.disabled) return;
+    let pool = world.MAPS.filter((m) => matches(m) && m.id !== world.MAP.id);
+    if (!pool.length) pool = world.MAPS.filter((m) => m.id !== world.MAP.id);
+    if (!pool.length) return;
+    const m = pool[Math.floor(Math.random() * pool.length)];
+    rnd.disabled = true;
+    let card = cards.querySelector(`.sc[data-id="${m.id}"]`);
+    if (!card) { q.value = ''; query = ''; renderCards(); card = cards.querySelector(`.sc[data-id="${m.id}"]`); }
+    cards.querySelectorAll('.sc.on').forEach((c) => c.classList.remove('on'));
+    card.classList.add('on', 'pick'); card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    setTimeout(() => goMap(m.id), 650);
+  });
   async function loadHits() {
     const { rows } = await Rank.hits();
     hits = {};

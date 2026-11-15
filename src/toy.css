@@ -104,6 +104,20 @@ html.toy #veil.hide{opacity:0}
 #toyHome .best b{font-size:16px;font-weight:800}
 #toyHome .bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
 #toyHome .bar h2{margin:0;font-size:18px;font-weight:800}
+#toyHome .bar h2 .n{font-size:14px;font-weight:700;color:var(--g500)}
+#toyHome .find{display:flex;gap:8px;margin-bottom:10px}
+#toyHome .q{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:8px;height:46px;box-sizing:border-box;padding:0 12px;border-radius:14px;background:#fff;box-shadow:0 1px 3px rgba(0,27,55,.06);color:var(--g500);cursor:text}
+#toyHome .q:focus-within{box-shadow:0 0 0 2px var(--blue)}
+#toyHome .q svg{flex:0 0 18px;height:18px}
+#toyHome .q input{flex:1 1 auto;min-width:0;height:100%;border:0;outline:0;background:none;padding:0;font:600 16px var(--font);color:var(--g900)}
+#toyHome .q input::placeholder{color:var(--g400)}
+#toyHome .rnd{flex:0 0 auto;display:flex;align-items:center;gap:6px;height:46px;padding:0 16px 0 13px;border:0;border-radius:14px;background:var(--blue);color:#fff;font:800 15px var(--font);cursor:pointer;box-shadow:0 4px 12px rgba(49,130,246,.28)}
+#toyHome .rnd svg{width:20px;height:20px}
+#toyHome .rnd:active{transform:scale(.96)}
+#toyHome .rnd:disabled{opacity:.7}
+#toyHome .empty{grid-column:1/-1;padding:32px 8px;text-align:center;font-size:14px;font-weight:600;color:var(--g500)}
+#toyHome .sc.pick{animation:toyPick .6s ease}
+@keyframes toyPick{0%,100%{transform:scale(1)}35%{transform:scale(1.04);box-shadow:0 8px 22px rgba(49,130,246,.3)}}
 #toyHome .seg{display:flex;padding:3px;border-radius:12px;background:var(--g200)}
 #toyHome .seg button{border:0;background:none;padding:7px 12px;border-radius:9px;font:700 13px var(--font);color:var(--g600);cursor:pointer}
 #toyHome .seg button.on{background:#fff;color:var(--g900);box-shadow:0 1px 4px rgba(0,27,55,.1)}
@@ -154,6 +168,7 @@ html.toy #startBtn:disabled{background:var(--g300,#d1d6db);opacity:1}
   #toyHome .tt small{display:none}
   #toyHome .tt h1{font-size:22px}
   #toyHome .bar{margin-bottom:6px}
+  #toyHome .find{margin-bottom:6px}#toyHome .q,#toyHome .rnd{height:38px}
   #toyHome .links{margin-bottom:4px}
   #toyHome .sc{padding:8px}
   #toyHome .th{flex-basis:44px;height:44px}
