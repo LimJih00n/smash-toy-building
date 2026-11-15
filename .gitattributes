@@ -1,0 +1,2 @@
+# Cloudflare reads these as-is: keep LF line endings on every checkout
+deploy/preview/static/* text eol=lf
