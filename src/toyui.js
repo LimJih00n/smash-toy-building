@@ -16,6 +16,34 @@ const squash = (s) => s.toLowerCase().replace(/\s+/g, '');
 const TOWER = '<svg viewBox="-12 -12 24 24"><path d="M-9 9V-5h6V9M-2 9V-11h7V9M6 9V-2h4V9" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
 const MEDAL = { 1: ['동', '#c98a5c'], 2: ['은', '#9aa5b1'], 3: ['금', '#e2b33c'] };
 
+// A tap by a second finger gets no click from the browser (clicks come from the first touch only). In fight mode
+// the thumb rests on the joystick, so the weapon button, the picker and the menu would ignore the other finger:
+// click them on such a tap ourselves, and drop a real click that might follow anyway.
+{
+  const TAPPABLE = 'button, label, input';
+  const second = new Map(); // pointerId -> { el, x, y }
+  let synth = null;
+  addEventListener('pointerdown', (e) => {
+    if (e.isPrimary || e.pointerType !== 'touch') return;
+    const el = e.target.closest && e.target.closest(TAPPABLE);
+    if (el) second.set(e.pointerId, { el, x: e.clientX, y: e.clientY });
+  }, true);
+  addEventListener('pointerup', (e) => {
+    const s = second.get(e.pointerId); if (!s) return;
+    second.delete(e.pointerId);
+    if (Math.hypot(e.clientX - s.x, e.clientY - s.y) > 14) return; // a drag, not a tap
+    const at = document.elementFromPoint(e.clientX, e.clientY);
+    if (!at || !s.el.contains(at)) return;
+    synth = { el: s.el, t: performance.now() };
+    s.el.click();
+  }, true);
+  addEventListener('pointercancel', (e) => second.delete(e.pointerId), true);
+  addEventListener('click', (e) => {
+    if (!e.isTrusted || !synth || performance.now() - synth.t > 600 || !synth.el.contains(e.target)) return;
+    e.stopPropagation(); e.preventDefault(); synth = null;
+  }, true);
+}
+
 export function initToyUI(api) {
   const { world, Score, Rank, Emblem, W, Replay, run, fmtT, toast, resetWorld, setPaused, shareText, COARSE, isMuted, cycleView, toggleSound, openEmblems, openVeil, openSheet, saveClip, Fight, setFight } = api;
   const tap = COARSE ? '탭' : '클릭';

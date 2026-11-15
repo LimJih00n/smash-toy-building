@@ -352,17 +352,23 @@ function drawSlashLine(x0, y0, x1, y1) {
   slashLine.style.transform = `translate(${x0}px,${y0}px) rotate(${Math.atan2(y1 - y0, x1 - x0)}rad)`;
 }
 function crossAt(x, y, bad) { cross.style.display = 'block'; cross.style.left = x + 'px'; cross.style.top = y + 'px'; cross.classList.toggle('bad', !!bad); }
+// the drag weapons follow the first finger on the scene. Not the browser's "primary" pointer: in fight mode the
+// thumb on the joystick is that one, and the aiming finger would be ignored.
+const scenePtrs = new Set();
+const dropPtr = (e) => scenePtrs.delete(e.pointerId);
+addEventListener('pointerup', dropPtr, true); addEventListener('pointercancel', dropPtr, true);
 canvas.addEventListener('pointerdown', (e) => {
   A.init();
+  const first = scenePtrs.size === 0; scenePtrs.add(e.pointerId);
   down = { x: e.clientX, y: e.clientY, t: performance.now(), button: e.button, id: e.pointerId, multi: false };
-  if (tool === 'mg' && e.button === 0 && e.isPrimary) {
+  if (tool === 'mg' && e.button === 0 && first) {
     const h = pickScreen(e.clientX, e.clientY);
     if (h) { W.gunStart(h); firing = true; }
     crossAt(e.clientX, e.clientY, !h);
     return;
   }
-  if (tool === 'sword' && e.button === 0 && e.isPrimary) { swipe = { x: e.clientX, y: e.clientY }; crossAt(e.clientX, e.clientY, false); return; }
-  if (tool === 'laser' && e.button === 0 && e.isPrimary) {
+  if (tool === 'sword' && e.button === 0 && first) { swipe = { x: e.clientX, y: e.clientY }; crossAt(e.clientX, e.clientY, false); return; }
+  if (tool === 'laser' && e.button === 0 && first) {
     drawing = new W.LaserPath();
     const h = pickScreen(e.clientX, e.clientY);
     if (h && h.kind !== 'prop') drawing.add(h.point, h.normal);
@@ -479,7 +485,7 @@ addEventListener('keyup', (e) => moveKeys.delete(e.key.toLowerCase()));
 addEventListener('blur', () => moveKeys.clear());
 const _fw = new THREE.Vector3(), _rt = new THREE.Vector3(), _mv = new THREE.Vector3();
 function moveCamera(dt) {
-  if (Fight.state.on) { Fight.move(dt, moveKeys); return; } // fight mode: around the building at a set distance
+  if (Fight.state.on) { Fight.move(paused || !veil.classList.contains('hide') ? 0 : dt, moveKeys); return; } // fight mode: around the building at a set distance
   let f = 0, r = 0, u = 0;
   if (moveKeys.has('w') || moveKeys.has('arrowup')) f += 1;
   if (moveKeys.has('s') || moveKeys.has('arrowdown')) f -= 1;
