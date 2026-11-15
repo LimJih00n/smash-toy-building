@@ -62,12 +62,28 @@ html.toy .tool.on .desc{color:rgba(255,255,255,.85)}
 html.fight #toyWeapon{left:auto;right:12px;transform:none;min-width:0}
 html.fight #toyWeapon:active{transform:scale(.97)}
 html.fight #fJoy{display:block;position:fixed;z-index:6;left:14px;bottom:calc(var(--bot) - 2px);width:128px;height:128px;border-radius:50%;background:rgba(255,255,255,.62);box-shadow:var(--shadow);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);touch-action:none;cursor:pointer}
+#fJoy .en{position:absolute;inset:-7px;width:calc(100% + 14px);height:calc(100% + 14px);transform:rotate(-90deg);pointer-events:none}
+#fJoy .en circle{fill:none;stroke:rgba(0,27,55,.1);stroke-width:5}
+#fJoy .en .fg{stroke:var(--g400);stroke-linecap:round;stroke-dasharray:295.3;transition:stroke .2s}
+#fJoy.ready .en .fg{stroke:#ffb020}
+#fJoy .zap{position:absolute;right:-4px;top:-4px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:var(--shadow);font-size:13px;line-height:24px;text-align:center;filter:grayscale(1);opacity:.6;pointer-events:none}
+#fJoy.ready .zap{filter:none;opacity:1}
+#fJoy.empty{animation:fNo .3s}
+@keyframes fNo{25%{margin-left:-5px}75%{margin-left:5px}}
+#fRush{position:fixed;inset:0;z-index:5;pointer-events:none;opacity:0;background:radial-gradient(ellipse at center,rgba(255,255,255,0) 50%,rgba(255,214,120,.55) 100%)}
 #fJoy i{position:absolute;left:50%;top:50%;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;background:var(--blue);box-shadow:0 4px 14px rgba(49,130,246,.45);pointer-events:none}
 #fJoy .ar{position:absolute;font-size:11px;line-height:1;color:var(--g500);pointer-events:none}
 #fJoy .l{left:11px;top:50%;margin-top:-5px}#fJoy .r{right:11px;top:50%;margin-top:-5px}
 #fJoy .u{top:10px;left:50%;margin-left:-5px}#fJoy .d{bottom:10px;left:50%;margin-left:-5px}
 html.fight #fHp{display:flex;position:fixed;z-index:6;left:12px;top:calc(var(--top) + 74px);gap:2px;padding:6px 9px;border-radius:999px;background:rgba(255,255,255,.88);box-shadow:var(--shadow);pointer-events:none}
+#fHp .hearts{display:flex;gap:2px}
 #fHp b{display:block;width:19px;height:19px}
+#fHp .ang{display:none;margin-left:6px;padding-left:7px;border-left:1px solid var(--g200);font:800 13px/19px var(--font);white-space:nowrap}
+#fHp .ang.on{display:block}
+#fHp .ang.up{animation:fPulse .7s}
+@keyframes fPulse{30%{transform:scale(1.35)}}
+html.fight #hint{bottom:calc(var(--bot) + 146px)}
+html.fight #toast{top:calc(var(--top) + 116px)}html.fight #embPop{top:calc(var(--top) + 160px)}
 #fHp svg{display:block;width:100%;height:100%;fill:var(--g200)}
 #fHp b.on svg{fill:#ff4d5e}
 #fHp.blink{animation:fBlink .18s steps(2) infinite}

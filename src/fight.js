@@ -1,8 +1,9 @@
 // 반격 모드 (experimental, ?mode=fight): the target buildings fight back.
 // A window facing the player lights up red for a moment (the warning), then throws office things (paper balls,
 // coffee cups, staplers) at where the player is. The player is the camera: moving it around the building
-// (joystick, one-finger drag, WASD / arrow keys) dodges. A hit costs a heart; with no hearts left the run is over.
-// Later on the buildings lead their shots (aim where you are going) and throw fans of three.
+// (joystick or WASD / arrow keys; a quick flick of the joystick or Space dashes, using energy) dodges. A hit costs a
+// heart; with no hearts left the run is over. The more of the company is down, the angrier it gets: more throws,
+// faster ones, then shots that lead the player (aim where you are going) and fans of three.
 import * as THREE from 'three';
 import { scene, camera, controls } from './engine.js';
 import * as S from './structure.js';
@@ -16,9 +17,10 @@ export const state = {
   on: new URLSearchParams(location.search).get('mode') === 'fight',
   hp: MAX_HP, max: MAX_HP, over: false,
   t: 0, // active fight time (s): the difficulty ramps with it
-  hits: 0, dodged: 0, blocked: 0,
+  hits: 0, dodged: 0, blocked: 0, dashes: 0,
+  energy: 100,
 };
-export const hooks = { onStart: null, onHit: null, onDead: null };
+export const hooks = { onStart: null, onHit: null, onDead: null, onAnger: null };
 
 // ---------------------------------------------------------------- tuning (lengths are fractions of D, the camera's distance to the building)
 const GRACE = 2.5; // s before the first throw
@@ -28,6 +30,10 @@ const SIZE = 0.024; // a thrown thing's size
 const MOVE = 0.55; // full joystick: D per second
 const EL_MIN = THREE.MathUtils.degToRad(7), EL_MAX = THREE.MathUtils.degToRad(52); // camera height range (elevation)
 const INVULN = 1.2; // s of blinking after a hit
+// dash: a short burst along the stick (or WASD) direction, untouchable while it lasts
+const DASH = { cost: 40, regen: 22, time: 0.22, speed: 3.4, inv: 0.3 };
+// anger by how much of the company is down: [destroyed share, label]
+const ANGER = [[0.25, '건물이 화났어요! 더 자주 던져요'], [0.5, '더 화났어요! 피하는 쪽을 노려요'], [0.75, '폭주! 세 개씩 날아와요']];
 
 // ---------------------------------------------------------------- thrown things (toy office supplies)
 const mat = (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0, flatShading: true });
@@ -67,7 +73,7 @@ const shots = []; // { obj, pos, prev, vel, spin, axis, life, near, passed }
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _c = new THREE.Vector3();
 
 let D = 600; // camera distance to the building, fixed once the fight starts
-let began = false, nextIn = GRACE, inv = 0;
+let began = false, nextIn = GRACE, inv = 0, angerLv = 0;
 const pvel = new THREE.Vector3(), lastCam = new THREE.Vector3(); // the player's velocity, for leading shots
 const cache = new WeakMap(); // building -> { n, arr } its standing pieces as an array
 
@@ -76,36 +82,91 @@ const ui = {};
 function buildUI() {
   if (ui.hp) return;
   ui.hp = document.createElement('div'); ui.hp.id = 'fHp';
+  ui.hearts = document.createElement('span'); ui.hearts.className = 'hearts';
+  ui.ang = document.createElement('span'); ui.ang.className = 'ang';
+  ui.hp.append(ui.hearts, ui.ang);
   ui.joy = document.createElement('div'); ui.joy.id = 'fJoy';
-  ui.joy.innerHTML = '<span class="ar l">◀</span><span class="ar r">▶</span><span class="ar u">▲</span><span class="ar d">▼</span><i></i>';
-  ui.knob = ui.joy.querySelector('i');
+  ui.joy.innerHTML = '<svg class="en" viewBox="0 0 100 100"><circle cx="50" cy="50" r="47"/><circle class="fg" cx="50" cy="50" r="47"/></svg>'
+    + '<span class="ar l">◀</span><span class="ar r">▶</span><span class="ar u">▲</span><span class="ar d">▼</span><b class="zap">⚡</b><i></i>';
+  ui.knob = ui.joy.querySelector('i'); ui.ring = ui.joy.querySelector('.fg');
   ui.hurt = document.createElement('div'); ui.hurt.id = 'fHurt';
-  document.body.append(ui.hp, ui.joy, ui.hurt);
+  ui.rush = document.createElement('div'); ui.rush.id = 'fRush';
+  document.body.append(ui.hp, ui.joy, ui.hurt, ui.rush);
+  paintEnergy(true);
   paintHp();
   // the joystick: drag the knob; it springs back on release
-  let id = null, cx = 0, cy = 0;
-  const R = 44;
-  const set = (x, y) => {
+  // a flick: from near the middle out to the rim within a moment (timed by the input's own timestamps, so a
+  // busy frame doesn't turn a flick into a push)
+  let id = null, cx = 0, cy = 0, calmAt = 0, armed = true;
+  const R = 44, FLICK_MS = 200;
+  const set = (x, y, now) => {
     let dx = x - cx, dy = y - cy; const l = Math.hypot(dx, dy);
     if (l > R) { dx *= R / l; dy *= R / l; }
     joy.x = dx / R; joy.y = -dy / R;
     ui.knob.style.transform = `translate(${dx}px,${dy}px)`;
+    const m = Math.min(1, l / R);
+    if (m < 0.35) { calmAt = now; armed = true; }
+    else if (m > 0.9 && armed && now - calmAt < FLICK_MS) { armed = false; dash(joy.x, joy.y); }
   };
   ui.joy.addEventListener('pointerdown', (e) => {
     e.stopPropagation(); e.preventDefault(); A.init();
     id = e.pointerId; ui.joy.setPointerCapture(id);
-    const r = ui.joy.getBoundingClientRect(); cx = r.left + r.width / 2; cy = r.top + r.height / 2; set(e.clientX, e.clientY);
+    const r = ui.joy.getBoundingClientRect(); cx = r.left + r.width / 2; cy = r.top + r.height / 2;
+    calmAt = 0; armed = false; set(e.clientX, e.clientY, e.timeStamp); // landing off-centre is a push, not a flick
   });
-  ui.joy.addEventListener('pointermove', (e) => { if (e.pointerId === id) { e.stopPropagation(); set(e.clientX, e.clientY); } });
+  ui.joy.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== id) return;
+    e.stopPropagation();
+    // coalesced moves keep the in-between positions (and their times) of a fast flick
+    const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+    for (const c of evs.length ? evs : [e]) set(c.clientX, c.clientY, c.timeStamp);
+  });
   const end = (e) => { if (e.pointerId !== id) return; e.stopPropagation(); id = null; joy.x = joy.y = 0; ui.knob.style.transform = ''; };
   ui.joy.addEventListener('pointerup', end); ui.joy.addEventListener('pointercancel', end);
 }
 const HEART = '<svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.6-9.6-9.4C.9 8.2 3 4.5 6.6 4.5c2.2 0 3.6 1.2 5.4 3.1 1.8-1.9 3.2-3.1 5.4-3.1 3.6 0 5.7 3.7 4.2 7.1C19.5 16.4 12 21 12 21z"/></svg>';
 function paintHp() {
   if (!ui.hp) return;
-  ui.hp.innerHTML = Array.from({ length: state.max }, (_, i) => `<b class="${i < state.hp ? 'on' : ''}">${HEART}</b>`).join('');
+  ui.hearts.innerHTML = Array.from({ length: state.max }, (_, i) => `<b class="${i < state.hp ? 'on' : ''}">${HEART}</b>`).join('');
 }
 const joy = { x: 0, y: 0 };
+let shownEnergy = -1;
+/** how angry the company is (0-3): a badge beside the hearts */
+function paintAnger(up) {
+  if (!ui.ang) return;
+  ui.ang.textContent = angerLv ? '😡 ' + '🔥'.repeat(angerLv) : '';
+  ui.ang.classList.toggle('on', angerLv > 0);
+  if (up) { ui.ang.classList.remove('up'); void ui.ang.offsetWidth; ui.ang.classList.add('up'); }
+}
+function paintEnergy(force) {
+  if (!ui.ring) return;
+  const e = Math.round(state.energy);
+  if (!force && e === shownEnergy) return;
+  shownEnergy = e;
+  ui.ring.style.strokeDashoffset = (295.3 * (1 - e / 100)).toFixed(1);
+  ui.joy.classList.toggle('ready', e >= DASH.cost);
+}
+
+// ---------------------------------------------------------------- dash
+const dashV = new THREE.Vector2(); let dashT = 0;
+/** burst along (x, y) (stick axes: x right, y up); false when there is not enough energy */
+export function dash(x, y) {
+  if (!state.on || !began || state.over) return false;
+  const l = Math.hypot(x, y); if (l < 0.2) return false;
+  if (state.energy < DASH.cost) { if (ui.joy) { ui.joy.classList.remove('empty'); void ui.joy.offsetWidth; ui.joy.classList.add('empty'); } return false; }
+  state.energy -= DASH.cost; state.dashes++;
+  dashV.set(x / l, y / l); dashT = DASH.time;
+  inv = Math.max(inv, DASH.inv);
+  FX.punch(5); A.whoosh(null, 0.3);
+  if (ui.rush) { ui.rush.style.transition = 'none'; ui.rush.style.opacity = 1; requestAnimationFrame(() => { ui.rush.style.transition = 'opacity .35s'; ui.rush.style.opacity = 0; }); }
+  paintEnergy(true);
+  return true;
+}
+addEventListener('keydown', (e) => {
+  if (!state.on || e.repeat || (e.target && e.target.tagName === 'INPUT')) return;
+  if (e.code === 'Space' || e.key === 'Shift') { e.preventDefault(); dash(keyDir.x || mv.x, keyDir.y || mv.y); }
+});
+const keyDir = new THREE.Vector2();
 
 // ---------------------------------------------------------------- mode on / off
 export function setOn(v) {
@@ -116,6 +177,7 @@ export function setOn(v) {
 }
 /** the camera stays at one distance from the building and within a band of heights: what's left is moving around it */
 function limits() {
+  controls.enableRotate = !state.on; // fight mode: the joystick is the one way to move
   controls.enableZoom = !state.on;
   controls.enablePan = !state.on;
   controls.minPolarAngle = state.on ? Math.PI / 2 - EL_MAX : 0;
@@ -127,8 +189,9 @@ export function reset() {
   for (const w of warns) scene.remove(w.sprite);
   for (const s of shots) scene.remove(s.obj);
   warns.length = 0; shots.length = 0;
-  Object.assign(state, { hp: MAX_HP, over: false, t: 0, hits: 0, dodged: 0, blocked: 0 });
-  began = false; nextIn = GRACE; inv = 0;
+  Object.assign(state, { hp: MAX_HP, over: false, t: 0, hits: 0, dodged: 0, blocked: 0, dashes: 0, energy: 100 });
+  began = false; nextIn = GRACE; inv = 0; dashT = 0; angerLv = 0;
+  paintEnergy(true); paintAnger();
   if (ui.hp) { paintHp(); ui.hp.classList.remove('blink'); }
 }
 
@@ -144,9 +207,11 @@ export function move(dt, keys) {
     if (keys.has('s') || keys.has('arrowdown')) y -= 1;
   }
   x = clamp(x, -1, 1); y = clamp(y, -1, 1);
-  // a little inertia: speeds ease in and out
+  keyDir.set(x - joy.x, y - joy.y);
+  // a little inertia: speeds ease in and out; a dash takes over for its moment
   const k = Math.min(1, dt * 10);
   mv.x += (x - mv.x) * k; mv.y += (y - mv.y) * k;
+  if (dashT > 0) { const f = DASH.speed * (0.45 + 0.55 * dashT / DASH.time); mv.set(dashV.x * f, dashV.y * f); dashT -= dt; }
   const tg = controls.target;
   _off.subVectors(camera.position, tg);
   const dist = began ? D : _off.length();
@@ -194,7 +259,8 @@ function warn(lead, fan) {
   A.blip(740);
 }
 function throwFrom(w) {
-  const T = Math.max(1.45, 2.5 - state.t * 0.012); // flight time to the player
+  // flight time to the player: faster the more of the company is down (and a little with time)
+  const T = (2.5 - 1.1 * S.targetRatio()) * Math.max(0.9, 1 - state.t * 0.002);
   const aim = _w.copy(camera.position);
   if (w.lead) aim.addScaledVector(pvel, T * w.lead);
   const offs = [0];
@@ -241,15 +307,18 @@ export function update(dt, active) {
   if (dt > 0) { _v.subVectors(camera.position, lastCam).divideScalar(dt); pvel.lerp(_v, Math.min(1, dt * 6)); }
   lastCam.copy(camera.position);
   if (inv > 0) { inv -= dt; if (inv <= 0 && ui.hp) ui.hp.classList.remove('blink'); }
+  state.energy = Math.min(100, state.energy + DASH.regen * dt); paintEnergy(false);
 
-  // the more of them is down, the angrier they get
-  const anger = 1 + S.targetRatio() * 0.8;
-  nextIn -= dt * anger;
-  if (nextIn <= 0 && warns.length < 3) {
-    const lead = Math.random() < clamp((state.t - 15) / 40, 0, 0.7) ? 0.6 + Math.random() * 0.4 : 0;
-    const fan = !lead && Math.random() < clamp((state.t - 30) / 60, 0, 0.35);
+  // the more of the company is down, the angrier it gets: more throws at once, more often, leading, in fans
+  const r = S.targetRatio();
+  while (angerLv < ANGER.length && r >= ANGER[angerLv][0]) { if (hooks.onAnger) hooks.onAnger(ANGER[angerLv][1], angerLv + 1); angerLv++; paintAnger(true); }
+  nextIn -= dt;
+  if (nextIn <= 0 && warns.length < 2 + Math.floor(r * 3)) {
+    const lead = Math.random() < clamp((r - 0.15) / 0.5, 0, 0.7) ? 0.6 + Math.random() * 0.4 : 0;
+    const fan = !lead && Math.random() < clamp((r - 0.35) / 0.5, 0, 0.4);
     warn(lead, fan);
-    nextIn = Math.max(0.8, 2.4 - state.t * 0.025) * (fan ? 1.5 : 1) * (0.8 + Math.random() * 0.4);
+    if (r > 0.6 && Math.random() < r - 0.45) warn(0, false); // two windows at once
+    nextIn = (2.6 - 1.7 * r) * Math.max(0.8, 1 - state.t * 0.004) * (fan ? 1.4 : 1) * (0.8 + Math.random() * 0.4);
   }
 
   // warnings: blink, then throw (a window that got knocked out meanwhile throws nothing)

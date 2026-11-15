@@ -230,7 +230,8 @@ function clearMarkers() { markerBox.textContent = ''; markers.clear(); mkMain = 
 const run = { on: false, t: 0, done: false, failed: false, fight: false, nuke: false, shots: 0, lastRatio: 0, weapons: new Set() };
 const veil = $('veil');
 // fight mode: the clock runs from the first throw; a knockout ends the run (not a clear)
-Fight.hooks.onStart = () => { if (!run.on && !run.done) { run.on = true; run.fight = true; } banner('건물의 반격!', '빨간 ! 가 뜨면 피하세요'); };
+Fight.hooks.onStart = () => { if (!run.on && !run.done) { run.on = true; run.fight = true; } banner('건물의 반격!', '조이스틱으로 피하기 · 빠르게 튕기면 대쉬'); };
+Fight.hooks.onAnger = (msg) => toast('😡 ' + msg); // a toast: the weapons' banners (붕괴!) come at the same moments
 Fight.hooks.onHit = (what, hp) => toast(what + '에 맞았어요 · ❤ ' + hp);
 Fight.hooks.onDead = () => {
   run.on = false; run.failed = true;
